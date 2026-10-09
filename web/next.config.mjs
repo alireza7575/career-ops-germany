@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  allowedDevOrigins: ["127.0.0.1"],
   // Two lockfiles exist on purpose (repo root + web/), so Next would infer the
   // repo root as the workspace root. On Windows that misinference can send
   // Turbopack's postcss workers into an unbounded respawn loop that exhausts

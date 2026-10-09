@@ -96,6 +96,8 @@ jobs:
         with:
           fetch-depth: 0            # harness needs release tags
           persist-credentials: false # the harness only ever touches a local mirror
+      - name: Fetch upstream release tags for fork upgrade tests
+        run: git fetch --no-tags https://github.com/career-ops-hq/career-ops.git "refs/tags/career-ops-v*:refs/tags/career-ops-v*"
       - uses: actions/setup-node@v7
         with:
           node-version: '24'

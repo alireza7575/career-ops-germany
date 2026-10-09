@@ -1,12 +1,16 @@
 // The cost-honesty taxonomy — a single source for the FREE vs $ boundary that the
-// Explorer teaches by repetition. Discovery (finding roles) is structurally free:
-// it calls no LLM. Only evaluation (scoring a role against your CV) spends tokens,
+// Explorer teaches by repetition. Structured discovery is free; optional
+// web-index sources consume search credits. Evaluation spends AI tokens,
 // and only when the user chooses it. The framing is always local-first: "your key,
 // your AI, your machine."
 
-export type CostClass = "free" | "free-network" | "spend" | "free-gemini";
+export type CostClass = "free" | "free-network" | "search-credits" | "spend" | "free-gemini";
 
 export const COST_META: Record<CostClass, { label: string; tip: string }> = {
+  "search-credits": {
+    label: "Search credits",
+    tip: "Indeed and LinkedIn discovery uses your Serper search quota. No AI tokens are used.",
+  },
   "free-network": {
     label: "Free",
     tip: "Scans the public ATS network over HTTP. No AI, no tokens, nothing sent — and it writes nothing until you choose to add a role.",

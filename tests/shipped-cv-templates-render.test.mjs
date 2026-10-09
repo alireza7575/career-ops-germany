@@ -42,6 +42,11 @@ writeFileSync(input, JSON.stringify({
   certifications: [],
   awards: [],
   skills: [{ category: 'Languages', items: ['Go', 'TypeScript'] }],
+  languages: [
+    { category: 'English', items: 'C1' },
+    { category: 'German', items: 'B2' },
+    { category: 'French', items: 'A2' },
+  ],
 }));
 
 const templates = listTemplates('cv');

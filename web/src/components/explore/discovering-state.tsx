@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { ApplyBackdrop } from "@/components/apply/apply-backdrop";
 import { instrumentSerif } from "@/lib/fonts";
-import { ATS_LABEL, ATS_SOURCES, type AtsSource } from "@/lib/explore";
+import { ATS_LABEL, ATS_SOURCES, WEB_SEARCH_SOURCES, type AtsSource } from "@/lib/explore";
 import { useExplore, type SourceState } from "./explore-provider";
 
 const STYLE = `
@@ -69,9 +69,10 @@ function SourceChip({ ats, s }: { ats: AtsSource; s?: SourceState }) {
 }
 
 export function DiscoveringState() {
-  const { sources, matchCount, companiesScanned, status, phase } = useExplore();
+  const { sources, matchCount, companiesScanned, status, phase, filters } = useExplore();
   const shown = useCountUp(matchCount);
   const companies = useCountUp(companiesScanned);
+  const usesWebSearch = filters.ats.some((source) => WEB_SEARCH_SOURCES.includes(source));
 
   return (
     <>
@@ -81,13 +82,13 @@ export function DiscoveringState() {
 
         <div className="co-ledger">
           <span className="size-1.5 rounded-full bg-emerald-500" />
-          0 tokens · $0.00 {companies > 0 && <span className="opacity-70">· {companies.toLocaleString()} companies</span>}
+          {usesWebSearch ? "0 AI tokens · search credits may apply" : "0 tokens · $0.00"} {companies > 0 && <span className="opacity-70">· {companies.toLocaleString()} job boards</span>}
         </div>
 
         <div>
           <div className={`${instrumentSerif.className} co-disc__counter text-foreground`}>{shown}</div>
           <p className="mt-1 text-sm text-muted">
-            {phase === "revealing" ? "fresh roles found — free" : matchCount > 0 ? "fresh roles and counting…" : "scanning the network…"}
+            {phase === "revealing" ? (usesWebSearch ? "roles found" : "roles found — free") : matchCount > 0 ? (usesWebSearch ? "roles and counting…" : "roles and counting…") : "scanning the network…"}
           </p>
         </div>
 
@@ -99,7 +100,7 @@ export function DiscoveringState() {
 
         <p className="flex items-center gap-2 text-[13px] text-faint">
           <Loader2 className="size-3.5 animate-spin" />
-          {status || "Casting the net across the ATS network…"}
+          {status || "Casting the net across job sources…"}
         </p>
       </div>
     </>

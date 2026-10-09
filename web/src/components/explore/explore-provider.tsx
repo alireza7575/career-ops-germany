@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   DEFAULT_FILTERS,
   ATS_LABEL,
+  WEB_SEARCH_SOURCES,
   filtersToParams,
   aiToParams,
   isBroadSearch,
@@ -168,7 +169,7 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     setPartial(false);
     setError("");
     setScannerMissing(false);
-    setStatus("Casting the net across the ATS network…");
+    setStatus("Casting the net across job sources…");
     const init: Partial<Record<AtsSource, SourceState>> = {};
     for (const a of f.ats) init[a] = { state: "queued" };
     setSources(init);
@@ -290,7 +291,9 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
       }
       setMatchCount(acc.length);
       setPhase("revealing");
-      setStatus(`${acc.length} fresh role${acc.length === 1 ? "" : "s"} found — free.`);
+      setStatus(f.ats.some((source) => WEB_SEARCH_SOURCES.includes(source))
+        ? `${acc.length} role${acc.length === 1 ? "" : "s"} found. Search credits may apply.`
+        : `${acc.length} fresh role${acc.length === 1 ? "" : "s"} found — free.`);
       window.setTimeout(() => setPhase("results"), 850);
     } else if (sawError) {
       setError(sawError);

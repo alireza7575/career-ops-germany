@@ -62,6 +62,7 @@ const DEFAULT_SECTION_TITLES = {
   awards: 'Awards & Honors',
   interests: 'Interests',
   skills: 'Skills',
+  languages: 'Languages',
 };
 
 // Escape user text for HTML text/attribute context. Covers the five characters
@@ -686,6 +687,8 @@ function renderReport(payload, partials) {
     AWARDS: buildAwards(payload.awards, partials.get('awards')),
     SECTION_INTERESTS: escapeHtml(sectionTitles.interests),
     INTERESTS: buildInterests(payload.interests),
+    SECTION_LANGUAGES: escapeHtml(sectionTitles.languages),
+    LANGUAGES: buildSkills(payload.languages),
     SECTION_SKILLS: escapeHtml(sectionTitles.skills),
     SKILLS: buildSkills(payload.skills, partials.get('skills')),
     CONSENT: escapeHtml((payload.consent || '').trim()),

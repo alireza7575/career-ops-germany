@@ -4,13 +4,21 @@
 // can never drift between the two halves. Server-only logic (spawning the scanner,
 // writing temp files) lives in lib/core/{scan,portals,pipeline}.ts.
 
-export type AtsSource = "greenhouse" | "lever" | "ashby" | "workday";
-export const ATS_SOURCES: AtsSource[] = ["greenhouse", "lever", "ashby", "workday"];
+export type AtsSource = "greenhouse" | "lever" | "ashby" | "workday" | "arbeitsagentur" | "arbeitnow" | "indeed" | "linkedin";
+export const DIRECTORY_SOURCES: AtsSource[] = ["greenhouse", "lever", "ashby", "workday"];
+export const GERMAN_SOURCES: AtsSource[] = ["arbeitsagentur", "arbeitnow"];
+export const WEB_SEARCH_SOURCES: AtsSource[] = ["indeed", "linkedin"];
+export const FREE_SOURCES: AtsSource[] = [...DIRECTORY_SOURCES, ...GERMAN_SOURCES];
+export const ATS_SOURCES: AtsSource[] = [...FREE_SOURCES, ...WEB_SEARCH_SOURCES];
 export const ATS_LABEL: Record<AtsSource, string> = {
   greenhouse: "Greenhouse",
   lever: "Lever",
   ashby: "Ashby",
   workday: "Workday",
+  arbeitsagentur: "Bundesagentur",
+  arbeitnow: "Arbeitnow (DACH)",
+  indeed: "Indeed Germany",
+  linkedin: "LinkedIn Jobs",
 };
 
 /** The full UI filter state. The keyword/location lists mirror scan.mjs's
@@ -36,7 +44,7 @@ export const DEFAULT_FILTERS: ExploreFilters = {
   blockHard: [],
   alwaysAllow: [],
   sinceDays: 7,
-  ats: [...ATS_SOURCES],
+  ats: [...FREE_SOURCES],
   limitPerAts: 150,
 };
 
@@ -76,13 +84,13 @@ export type DiscoveredOffer = {
   confidence?: "low" | "medium" | "high";
 };
 
-/** The two discovery surfaces: free deterministic Scan vs token-spending AI search. */
+/** Deterministic scan (optionally using search credits) vs token-spending AI search. */
 export type ExploreMode = "scan" | "ai";
 
-/** Stream event grammar (NDJSON). `kind` discriminates. Discovery is FREE — the
- *  terminal `done` always carries cost {tokens:0, usd:0}. */
+/** Stream event grammar (NDJSON). `done` reports AI-token cost; selected web-index
+ *  sources can also consume external search credits. */
 export type ScanEvent =
-  | { kind: "start"; ats: string[]; sinceDays: number; limit: number; free: true }
+  | { kind: "start"; ats: string[]; sinceDays: number; limit: number; free: boolean }
   | { kind: "atsStart"; ats: string; companies: number }
   | { kind: "progress"; ats: string; scanned: number; total: number; matches: number }
   | { kind: "atsDone"; ats: string; unreachable: number }
@@ -119,11 +127,11 @@ function clampNum(v: unknown, lo: number, hi: number, fallback: number): number 
 }
 
 function cleanAts(v: unknown): AtsSource[] {
-  if (!Array.isArray(v)) return [...ATS_SOURCES];
+  if (!Array.isArray(v)) return [...FREE_SOURCES];
   const out = v
     .map((a) => String(a).toLowerCase())
     .filter((a): a is AtsSource => (ATS_SOURCES as string[]).includes(a));
-  return out.length ? Array.from(new Set(out)) : [...ATS_SOURCES];
+  return out.length ? Array.from(new Set(out)) : [...FREE_SOURCES];
 }
 
 /** Apply a (possibly partial) action/assistant patch onto a base. The assistant
@@ -167,7 +175,7 @@ export function filtersToParams(f: ExploreFilters): string {
   if (f.blockHard.length) sp.set("hardno", f.blockHard.join(","));
   if (f.alwaysAllow.length) sp.set("home", f.alwaysAllow.join(","));
   if (f.sinceDays !== DEFAULT_FILTERS.sinceDays) sp.set("since", String(f.sinceDays));
-  if (f.ats.length !== ATS_SOURCES.length) sp.set("ats", f.ats.join(","));
+  if (f.ats.join(",") !== DEFAULT_FILTERS.ats.join(",")) sp.set("ats", f.ats.join(","));
   if (f.limitPerAts !== DEFAULT_FILTERS.limitPerAts) sp.set("limit", String(f.limitPerAts));
   return sp.toString();
 }

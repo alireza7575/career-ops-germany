@@ -7,7 +7,7 @@ import { cn } from "@/lib/cn";
 import { instrumentSerif } from "@/lib/fonts";
 import type { Application, InboxJob } from "@/lib/career-ops";
 import { normalizeTextKey } from "@/lib/core/normalize-text-key.mjs";
-import { paramsToFilters, paramsToAi, type ExploreFilters } from "@/lib/explore";
+import { paramsToFilters, paramsToAi, WEB_SEARCH_SOURCES, type ExploreFilters } from "@/lib/explore";
 import { FilterBuilder } from "./filter-builder";
 import { DiscoveringState } from "./discovering-state";
 import { AiHuntView } from "./ai-hunt-view";
@@ -41,9 +41,10 @@ export function ExplorerView({
   rootExists: boolean;
 }) {
   const { filters, setFilters, initFilters, phase, running, offers, discover, loadFresh, status, error, scannerMissing, mode, setMode, aiIntent, setAiIntent, discoverAI, companiesScanned, companiesAvailable, capHit, droppedNoDate, partial } = useExplore();
+  const usesWebSearch = filters.ats.some((source) => WEB_SEARCH_SOURCES.includes(source));
   const scanNote =
     companiesScanned > 0
-      ? `Scanned ${companiesScanned.toLocaleString()}${companiesAvailable > companiesScanned ? ` of ${companiesAvailable.toLocaleString()}` : ""} compan${companiesScanned === 1 ? "y" : "ies"}${partial ? " · some sources were unreachable" : ""}.`
+      ? `Scanned ${companiesScanned.toLocaleString()}${companiesAvailable > companiesScanned ? ` of ${companiesAvailable.toLocaleString()}` : ""} job board${companiesScanned === 1 ? "" : "s"}${partial ? " · some sources were unreachable" : ""}.`
       : undefined;
   const inited = useRef(false);
   const [refineOpen, setRefineOpen] = useState(false);
@@ -129,7 +130,7 @@ export function ExplorerView({
             <span className="rounded-full border border-brand/30 bg-brand-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-text">New</span>
           </div>
           <div className="w-full sm:ml-auto sm:w-auto">
-            <ExploreModeToggle mode={mode} onChange={setMode} cliConfigured={!!cli.id} />
+            <ExploreModeToggle mode={mode} onChange={setMode} cliConfigured={!!cli.id} usesWebSearch={usesWebSearch} />
           </div>
         </div>
         {!isResults && (
@@ -184,7 +185,7 @@ export function ExplorerView({
               {refineOpen && (
                 <div className="space-y-4 border-t border-border p-4">
                   <FilterBuilder filters={filters} onChange={setFilters} seededFrom={seed.seededFrom} />
-                  <DiscoverBar canDiscover={canDiscover} onDiscover={discover} label="Re-cast (free)" filters={filters} />
+                  <DiscoverBar canDiscover={canDiscover} onDiscover={discover} label={usesWebSearch ? "Re-cast" : "Re-cast (free)"} filters={filters} />
                 </div>
               )}
             </div>
@@ -192,7 +193,7 @@ export function ExplorerView({
             <div className="mb-6 rounded-2xl border border-border bg-surface/30 p-5">
               <FilterBuilder filters={filters} onChange={setFilters} seededFrom={seed.seededFrom} />
               <div className="mt-5">
-                <DiscoverBar canDiscover={canDiscover} onDiscover={discover} label="Discover (free)" filters={filters} />
+                <DiscoverBar canDiscover={canDiscover} onDiscover={discover} label={usesWebSearch ? "Discover" : "Discover (free)"} filters={filters} />
               </div>
             </div>
           )}
@@ -238,8 +239,8 @@ export function ExplorerView({
           {phase === "empty-loose" && (
             <EmptyState
               tone="loose"
-              title="No fresh matches — yet."
-              body="Discovery is free — loosen and re-cast as often as you want."
+              title="No matches — yet."
+              body={usesWebSearch ? "Loosen the filters and re-cast. Web-index search credits may apply." : "Discovery is free — loosen and re-cast as often as you want."}
               note={scanNote}
               onRerun={() => {
                 setFilters({ ...filters, sinceDays: 30, block: [], allow: [] });
@@ -324,13 +325,13 @@ function DegradedCard({
     "The public ATS directories didn’t respond — usually a transient network hiccup or rate-limit, so nothing could be searched. This isn’t “all caught up”; a retry in a moment usually clears it.";
   if (companiesScanned > 0 && capHit) {
     title = "No matches in the slice we searched.";
-    body = `The scan is capped, so it only searched ${companiesScanned.toLocaleString()}${companiesAvailable > companiesScanned ? ` of ${companiesAvailable.toLocaleString()}` : ""} companies — not the whole network. Raise scan depth (Refine search) or narrow your roles, then re-cast to look deeper.`;
+    body = `The scan is capped, so it only searched ${companiesScanned.toLocaleString()}${companiesAvailable > companiesScanned ? ` of ${companiesAvailable.toLocaleString()}` : ""} job boards — not the whole network. Raise scan depth (Refine search) or narrow your roles, then re-cast to look deeper.`;
   } else if (companiesScanned > 0 && droppedNoDate > 0) {
     title = "Fresh-looking roles were skipped for missing dates.";
     body = `${droppedNoDate.toLocaleString()} posting${droppedNoDate === 1 ? "" : "s"} matched but had no clear publish date, so the freshness filter dropped them. Widening the time window often brings dated equivalents back.`;
   } else if (companiesScanned > 0 && partial) {
     title = "Some job boards were unreachable.";
-    body = `The scan searched ${companiesScanned.toLocaleString()} companies, but one or more sources didn’t respond — so this is a partial result, not “all caught up”. A retry usually clears it.`;
+    body = `The scan searched ${companiesScanned.toLocaleString()} job boards, but one or more sources didn’t respond — so this is a partial result, not “all caught up”. A retry usually clears it.`;
   }
   return (
     <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-5 text-center">
@@ -351,7 +352,7 @@ function CappedBanner({ companiesScanned, companiesAvailable, onRefine }: { comp
     <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] px-4 py-2.5 text-[13px]">
       <span className="text-foreground">
         Showing a capped slice — searched {companiesScanned.toLocaleString()}
-        {companiesAvailable > companiesScanned ? ` of ${companiesAvailable.toLocaleString()}` : ""} companies.
+        {companiesAvailable > companiesScanned ? ` of ${companiesAvailable.toLocaleString()}` : ""} job boards.
       </span>
       <button onClick={onRefine} className="font-medium text-brand hover:underline">
         Raise scan depth to search deeper

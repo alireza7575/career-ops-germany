@@ -111,6 +111,14 @@ const CALL_SITES = [
     args: [],
     probe: 'none',
   },
+  {
+    source: 'web/src/lib/core/german-boards.ts',
+    // rootScript locates the checkout; the child is the web-owned positional
+    // runner, covered by web/tests/lib/german-board-runner.test.mjs.
+    script: null,
+    args: [],
+    probe: 'none',
+  },
 ];
 
 /**

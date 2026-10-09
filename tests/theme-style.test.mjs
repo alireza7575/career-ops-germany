@@ -163,6 +163,7 @@ try {
       'templates/cv-template.jake.html': ['auto', true],
       'templates/cv-template.leadership.html': ['auto', true],
       'templates/cv-template.modern.html': ['auto', true],
+      'templates/cv-template.timeline.html': ['auto', true],
       'templates/cv-template.zh-minimal.html': ['auto', false],
       'templates/resume-template.html': ['avoid', false],
       'templates/ats/cv-template.ats.html': ['avoid', true],

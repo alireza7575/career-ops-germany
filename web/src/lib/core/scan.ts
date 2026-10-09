@@ -7,8 +7,12 @@ import { writeTempPortals, cleanupTempPortals } from "./portals";
 import { profileTargetKeywords } from "@/lib/profile-keywords.mjs";
 import { titleFit } from "@/lib/title-fit.mjs";
 import { resolveScanTimeoutMs, scanTimeoutMessage } from "./scan-timeout.mjs";
-import { ATS_LABEL, ATS_SOURCES, type AtsSource, type DiscoveredOffer, type ExploreFilters, type FitBand, type ScanEvent } from "@/lib/explore";
+import { ATS_LABEL, ATS_SOURCES, DIRECTORY_SOURCES, GERMAN_SOURCES, WEB_SEARCH_SOURCES, type AtsSource, type DiscoveredOffer, type ExploreFilters, type FitBand, type ScanEvent } from "@/lib/explore";
 import { mergeScanResults, timedOutMessage } from "./scan-merge.mjs";
+import { runGermanDiscovery, type GermanSource } from "./german-boards";
+import { searchWebBoard } from "./web-boards.mjs";
+import { runDiscoveryGroups } from "./discovery-groups.mjs";
+import { pathToFileURL } from "node:url";
 
 export type { DiscoveredOffer, ScanEvent, AtsSource } from "@/lib/explore";
 export { ATS_SOURCES } from "@/lib/explore";
@@ -379,7 +383,7 @@ function runScanner(
 
 const NO_OUTPUT = "The scanner returned no readable output.";
 
-export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEvent) => void): Promise<DiscoveredOffer[]> {
+async function runDirectoryDiscovery(filters: ExploreFilters, onEvent: (e: ScanEvent) => void): Promise<DiscoveredOffer[]> {
   const tempPortals = writeTempPortals(filters);
   const ats = (filters.ats.length ? filters.ats : [...ATS_SOURCES]).filter((a) => (ATS_SOURCES as readonly string[]).includes(a));
   const useJson = scannerSupportsJson();
@@ -450,4 +454,44 @@ export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEve
   } finally {
     cleanupTempPortals(tempPortals);
   }
+}
+
+export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEvent) => void): Promise<DiscoveredOffer[]> {
+  const selected = filters.ats.length ? filters.ats : [...DIRECTORY_SOURCES, ...GERMAN_SOURCES];
+  const directories = selected.filter((source) => DIRECTORY_SOURCES.includes(source));
+  const german = selected.filter((source): source is GermanSource => GERMAN_SOURCES.includes(source));
+  const web = selected.filter((source) => WEB_SEARCH_SOURCES.includes(source));
+  let webMatchers: {
+    titlePasses: (title: string) => boolean;
+    keywords: { value: string; matches: (title: string) => boolean }[];
+  } | undefined;
+  return runDiscoveryGroups({
+    directories, german, web, onEvent,
+    runDirectory: (emit: (event: ScanEvent) => void) => runDirectoryDiscovery({ ...filters, ats: directories }, emit),
+    runGerman: (emit: (event: ScanEvent) => void) => runGermanDiscovery(german, filters, emit),
+    runWeb: async (source: string) => {
+      // Load only for selected web-index sources. A matcher-load failure must not
+      // suppress results from directory or German provider groups.
+      if (!webMatchers) {
+        const moduleUrl = pathToFileURL(rootScript("title-keywords")).href;
+        const { buildTitleFilter } = await import(/* webpackIgnore: true */ moduleUrl);
+        webMatchers = {
+          titlePasses: buildTitleFilter({ positive: filters.positive, negative: filters.negative }),
+          keywords: filters.positive.filter((value) => value.trim()).map((value) => ({
+            value,
+            matches: buildTitleFilter({ positive: [value] }),
+          })),
+        };
+      }
+      const { titlePasses, keywords } = webMatchers;
+      const result = await searchWebBoard(source, filters, process.env.SERPER_API_KEY?.trim() || "", titlePasses);
+      return {
+        ...result,
+        offers: result.offers.map((offer) => ({
+          ...offer,
+          matchedKeyword: keywords.find(({ matches }) => matches(offer.title))?.value,
+        })),
+      };
+    },
+  });
 }

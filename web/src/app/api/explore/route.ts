@@ -2,11 +2,11 @@ import { NextRequest } from "next/server";
 import fs from "node:fs";
 import { runDiscovery } from "@/lib/core/scan";
 import { rootScript } from "@/lib/career-ops";
-import { parseExplorePatch, DEFAULT_FILTERS, type DiscoveredOffer, type ScanEvent } from "@/lib/explore";
+import { parseExplorePatch, DEFAULT_FILTERS, WEB_SEARCH_SOURCES, DIRECTORY_SOURCES, type DiscoveredOffer, type ScanEvent } from "@/lib/explore";
 import { scannerMissingBody, SCANNER_MISSING_STATUS } from "@/lib/explore-error.mjs";
 
-// Discovery is HTTP-bound across many ATS boards; give it room. It is FREE —
-// zero LLM tokens (the scanner only does HTTP + JSON, and --dry-run writes nothing).
+// Discovery is HTTP-bound across many sources; give it room. Structured sources
+// use no paid search service; selected web-index sources can consume credits.
 export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   // Guard: a data-only checkout (or pre-onboarding) has no scanner. Fail soft.
   // The body carries an explicit code because 400 is a shared channel: the
   // client cannot tell this apart from a malformed request by status alone.
-  if (!fs.existsSync(rootScript("scan-ats-full"))) {
+  if (filters.ats.every((source) => DIRECTORY_SOURCES.includes(source)) && !fs.existsSync(rootScript("scan-ats-full"))) {
     return Response.json(scannerMissingBody(), { status: SCANNER_MISSING_STATUS });
   }
 
@@ -38,7 +38,8 @@ export async function POST(req: NextRequest) {
           /* stream closed */
         }
       };
-      send({ kind: "start", ats: filters.ats, sinceDays: filters.sinceDays, limit: filters.limitPerAts, free: true } satisfies ScanEvent);
+      send({ kind: "start", ats: filters.ats, sinceDays: filters.sinceDays, limit: filters.limitPerAts,
+        free: !filters.ats.some((source) => WEB_SEARCH_SOURCES.includes(source)) } satisfies ScanEvent);
       let offers: DiscoveredOffer[] = [];
       try {
         offers = await runDiscovery(filters, (e: ScanEvent) => send(e));
