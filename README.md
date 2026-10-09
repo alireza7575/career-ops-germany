@@ -2,6 +2,8 @@
 
 <p align="center">The open-source AI job search agent.</p>
 
+**German-market fork:** Reusable software-search presets, German job-board discovery, and Windows Codex detection. Start with the [German-market setup guide](docs/GERMAN_MARKET.md) to use your own private data and receive upstream updates. Based on [career-ops](https://github.com/career-ops-hq/career-ops).
+
 <p align="center">
   <a href="README.md">English</a> |
   <a href="README.es.md">Español</a> |
