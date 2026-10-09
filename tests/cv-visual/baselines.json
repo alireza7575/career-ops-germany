@@ -69,6 +69,16 @@
     "zh-long-no-photo": 2,
     "zh-long-photo": 2
   },
+  "timeline": {
+    "en-short-no-photo": 1,
+    "en-short-photo": 1,
+    "en-long-no-photo": 2,
+    "en-long-photo": 2,
+    "zh-short-no-photo": 1,
+    "zh-short-photo": 1,
+    "zh-long-no-photo": 2,
+    "zh-long-photo": 2
+  },
   "zh-minimal": {
     "en-short-no-photo": 1,
     "en-short-photo": 1,
