@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { codexStreamArgs, isFatalClaudeStderr, isFatalCodexStderr, parseClaudeEvent, parseCodexEvent, parseGrokEvent } from "./run-cli-support.mjs";
 import { installedCliIds, pickUsableCli } from "./cli-pick.mjs";
+import { codexDesktopDirs } from "./codex-desktop-paths.mjs";
 
 // Server-only (node imports). The agnostic runtimes career-ops can delegate to
 // in headless mode (AGENTS.md). Install URLs from career-ops-docs.
@@ -76,6 +77,7 @@ export const KNOWN: CliSpec[] = [
 
 function searchDirs(): string[] {
   const home = os.homedir();
+  const preferred: string[] = [];
   const extra = [
     path.join(home, ".local/bin"),
     path.join(home, ".grok/bin"), // Grok Build CLI
@@ -92,6 +94,7 @@ function searchDirs(): string[] {
     // reliably add themselves to PATH (e.g. Antigravity → %LOCALAPPDATA%\agy\bin).
     const localAppData = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
     const appData = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+    preferred.push(...codexDesktopDirs(localAppData));
     extra.push(
       path.join(localAppData, "agy", "bin"), // Antigravity CLI
       path.join(localAppData, "grok", "bin"), // Grok Build CLI
@@ -100,7 +103,7 @@ function searchDirs(): string[] {
     );
   }
   const fromPath = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
-  return [...new Set([...fromPath, ...extra])];
+  return [...new Set([...preferred, ...fromPath, ...extra])];
 }
 
 // On Windows, executables carry an extension (claude.exe, claude.cmd, ...).
