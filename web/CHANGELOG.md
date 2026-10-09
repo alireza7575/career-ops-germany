@@ -1,5 +1,77 @@
 # Changelog
 
+## [0.14.0](https://github.com/alireza7575/career-ops-germany/compare/web-v0.13.0...web-v0.14.0) (2026-10-09)
+
+
+### Features
+
+* add German-market search starter and Explorer sources ([e017ee5](https://github.com/alireza7575/career-ops-germany/commit/e017ee50e14a18dae3399ac5153c9c1224c43f51))
+* add Hermes Agent headless CLI support ([#4623](https://github.com/alireza7575/career-ops-germany/issues/4623)) ([a6b867a](https://github.com/alireza7575/career-ops-germany/commit/a6b867adbc634cb61cc103ac8af350932878baf3))
+* **cli:** register Pi as a supported CLI host ([#4157](https://github.com/alireza7575/career-ops-germany/issues/4157)) ([#4157](https://github.com/alireza7575/career-ops-germany/issues/4157)) ([74c5d17](https://github.com/alireza7575/career-ops-germany/commit/74c5d178a631540a9966122fef29db02b28918dc))
+* **cv-templates:** add atsLint, with the ATS rules as data in templates/ats-rules.yml ([#3900](https://github.com/alireza7575/career-ops-germany/issues/3900)) ([6f1a74e](https://github.com/alireza7575/career-ops-germany/commit/6f1a74e8e37119f01a68a397187025e7dacc804a))
+* **explorer:** free banded title-vs-profile fit hint on discovery cards ([#3261](https://github.com/alireza7575/career-ops-germany/issues/3261)) ([b080539](https://github.com/alireza7575/career-ops-germany/commit/b0805395cc8d462bc9a6a36c0b2ea8921c522e50))
+* **i18n:** support language.modes_dir as a list of declared markets ([#3798](https://github.com/alireza7575/career-ops-germany/issues/3798)) ([d31a138](https://github.com/alireza7575/career-ops-germany/commit/d31a138e8b3dc1971a43e15931623112c8a83246))
+* **ui:** stream matched job cards into results during scan ([#4200](https://github.com/alireza7575/career-ops-germany/issues/4200)) ([78e13ca](https://github.com/alireza7575/career-ops-germany/commit/78e13ca707a567d2d6b2dc5df5c65828104ee20a))
+* **web:** add city or location filter to Explore ([#4397](https://github.com/alireza7575/career-ops-germany/issues/4397)) ([9a8667b](https://github.com/alireza7575/career-ops-germany/commit/9a8667b39cb7c632e8b55dd62c836c8427e92069))
+* **web:** add local scheduled scans ([#2628](https://github.com/alireza7575/career-ops-germany/issues/2628)) ([85b67f5](https://github.com/alireza7575/career-ops-germany/commit/85b67f527c14ebd08c8aa00bedeff28182499978))
+* **web:** add pipeline Sankey on Analytics ([#3373](https://github.com/alireza7575/career-ops-germany/issues/3373)) ([508abb3](https://github.com/alireza7575/career-ops-germany/commit/508abb3b46c421ce00eff6f136a181b4df369ff1))
+* **web:** add route-aware loading feedback ([#4338](https://github.com/alireza7575/career-ops-germany/issues/4338)) ([e049608](https://github.com/alireza7575/career-ops-germany/commit/e04960897029429c2dd23cc0a3bd3a8996d26ef1))
+* **web:** add shared theme provider and polish light-mode UX ([#4313](https://github.com/alireza7575/career-ops-germany/issues/4313)) ([27a89b7](https://github.com/alireza7575/career-ops-germany/commit/27a89b71af5c981e2ff7d05d085c14a3c8fe5270))
+* **web:** Analytics progress + insights views, read from the core ([#4576](https://github.com/alireza7575/career-ops-germany/issues/4576)) ([2d38488](https://github.com/alireza7575/career-ops-germany/commit/2d38488012c172a1fbbb2d025d7b51eed8a3bbcb))
+* **web:** edit application status inline in Pipeline ([#4701](https://github.com/alireza7575/career-ops-germany/issues/4701)) ([b89ef7e](https://github.com/alireza7575/career-ops-germany/commit/b89ef7e27ca7ccf8380c8a8571dbd8732b26b845))
+* **web:** keep context during loading transitions ([#4473](https://github.com/alireza7575/career-ops-germany/issues/4473)) ([e691fa6](https://github.com/alireza7575/career-ops-germany/commit/e691fa68693abbed25eb301532c0294408e5edb9))
+* **web:** make the evaluated-role report a decision, not a dump ([#4210](https://github.com/alireza7575/career-ops-germany/issues/4210)) ([3ebcaf6](https://github.com/alireza7575/career-ops-germany/commit/3ebcaf661c6f20d432d4a02fe7c35df14d64cff2))
+* **web:** preserve assistant conversations and earlier context ([#4495](https://github.com/alireza7575/career-ops-germany/issues/4495)) ([f9e9139](https://github.com/alireza7575/career-ops-germany/commit/f9e91394657a229b351df7ff451f6b6d59b08967))
+* **web:** show tracker number in Pipeline ([#3477](https://github.com/alireza7575/career-ops-germany/issues/3477)) ([bf2a764](https://github.com/alireza7575/career-ops-germany/commit/bf2a764bb07acd30f6b8b372e6bbf659901c1ea6))
+
+
+### Bug Fixes
+
+* **apply:** the code-fence strip reached inside JSON string values ([#3302](https://github.com/alireza7575/career-ops-germany/issues/3302)) ([c8e1777](https://github.com/alireza7575/career-ops-germany/commit/c8e1777d087b2e7c5be729d6712c493e48540159))
+* **deps:** update npm dependencies ([#3541](https://github.com/alireza7575/career-ops-germany/issues/3541)) ([f067b13](https://github.com/alireza7575/career-ops-germany/commit/f067b135716c7cc528c71720aac33554048114f6))
+* detect complete Codex Desktop bundles on Windows ([0de4996](https://github.com/alireza7575/career-ops-germany/commit/0de4996cf12dda9b79a6dc5f28ec9a57b627a5a5))
+* **funnel:** retain replies and historical stages across surfaces ([#4374](https://github.com/alireza7575/career-ops-germany/issues/4374)) ([ead56e8](https://github.com/alireza7575/career-ops-germany/commit/ead56e8c158ea8353636f85600062b0b1102cdb4))
+* **generate-pdf:** key the PDF manifest on report number and artifact kind ([#3959](https://github.com/alireza7575/career-ops-germany/issues/3959)) ([10e789a](https://github.com/alireza7575/career-ops-germany/commit/10e789a0363eba9f1aa73f8a1962e84e219aeb8d))
+* **paths:** resolve user-layer files via the data root in batch-tailor, cv-templates and openrouter-runner ([#4570](https://github.com/alireza7575/career-ops-germany/issues/4570)) ([cda5b0a](https://github.com/alireza7575/career-ops-germany/commit/cda5b0aa75ed601307f90e4810d26dcf20758259))
+* **pipeline:** break sort ties on the row number, so newest-first reorders a date ([#4333](https://github.com/alireza7575/career-ops-germany/issues/4333)) ([c4f2c3f](https://github.com/alireza7575/career-ops-germany/commit/c4f2c3fcbd22979143a0e6115bd2718a820ac41b))
+* preserve remaining CV and Windows customizations ([1f80262](https://github.com/alireza7575/career-ops-germany/commit/1f8026262ec15030b4558d9964c0842877da0657))
+* resolve discovery and timeline review findings ([e7ef51e](https://github.com/alireza7575/career-ops-germany/commit/e7ef51e7ff77d888d86c6fa3c07d964395445462))
+* run the web test suite on the minimum supported Node ([#4065](https://github.com/alireza7575/career-ops-germany/issues/4065)) ([533a4a8](https://github.com/alireza7575/career-ops-germany/commit/533a4a8dc0802fffc5a87afb3d380776bde6da14))
+* **tracker:** recognize localized headers across Node, web, and Go ([#3931](https://github.com/alireza7575/career-ops-germany/issues/3931)) ([a827945](https://github.com/alireza7575/career-ops-germany/commit/a827945b4a957976969b0a585019634f448ca44e))
+* **web/explore:** honest, configurable scan timeout with partial results ([#4191](https://github.com/alireza7575/career-ops-germany/issues/4191)) ([220ecd8](https://github.com/alireza7575/career-ops-germany/commit/220ecd876bcb49152068ecc098f55e5be0f8b542))
+* **web:** a failed atomic write leaves a full copy of cv.md behind, unignored ([#3245](https://github.com/alireza7575/career-ops-germany/issues/3245)) ([#3246](https://github.com/alireza7575/career-ops-germany/issues/3246)) ([2d37f77](https://github.com/alireza7575/career-ops-germany/commit/2d37f77fb6b29db1c43970e39df5f5f918ddc7e6))
+* **web:** bind the dashboard to loopback by default ([#3716](https://github.com/alireza7575/career-ops-germany/issues/3716)) ([7062ed5](https://github.com/alireza7575/career-ops-germany/commit/7062ed507ba07d3c876dc07f759897be8a4d82ea))
+* **web:** confirm paid assistant fan-out with cost estimates ([#4746](https://github.com/alireza7575/career-ops-germany/issues/4746)) ([b3b62b4](https://github.com/alireza7575/career-ops-germany/commit/b3b62b4cdce4e982697547f1f3e961a33b0843a3))
+* **web:** date run-route reports, tracker rows and PDFs with the local day ([#4615](https://github.com/alireza7575/career-ops-germany/issues/4615)) ([ca4be23](https://github.com/alireza7575/career-ops-germany/commit/ca4be231b124d43aaa8ce76c3e8cfff6272255b6))
+* **web:** fall back from a stale saved cliId on every AI route, not just Run ([#4638](https://github.com/alireza7575/career-ops-germany/issues/4638)) ([431f593](https://github.com/alireza7575/career-ops-germany/commit/431f5933bcb14d178cdff47cc6faa2bcc600407b))
+* **web:** keep Explore results from sources that finished when another times out ([#4431](https://github.com/alireza7575/career-ops-germany/issues/4431)) ([52d5ee5](https://github.com/alireza7575/career-ops-germany/commit/52d5ee5342bfa110826dbedca8578561530bd3b3))
+* **web:** launch npm CLIs on Windows ([#2626](https://github.com/alireza7575/career-ops-germany/issues/2626)) ([71d31f5](https://github.com/alireza7575/career-ops-germany/commit/71d31f5c728fdc175fdd2e23972cfe29700b2b6c))
+* **web:** make CLI choices fully clickable ([b4be24f](https://github.com/alireza7575/career-ops-germany/commit/b4be24f2b9e476888dedb5ee85d29df68baf53df))
+* **web:** persist inbox Skip to pipeline.md ([#3632](https://github.com/alireza7575/career-ops-germany/issues/3632)) ([fdaec05](https://github.com/alireza7575/career-ops-germany/commit/fdaec0557fa5c79cbdac4b8f4cb13b9d5499e88b))
+* **web:** pre-fill apply answers from the CV attached to the same form ([#4404](https://github.com/alireza7575/career-ops-germany/issues/4404)) ([414ff23](https://github.com/alireza7575/career-ops-germany/commit/414ff238679a186e74bcd3b0415f3fb4e49dce38))
+* **web:** preserve profiles with invalid YAML root shapes ([#4108](https://github.com/alireza7575/career-ops-germany/issues/4108)) ([5e79805](https://github.com/alireza7575/career-ops-germany/commit/5e79805be0134b000612771c26e7dbddd6ed981b))
+* **web:** readInbox returns an empty inbox on a CRLF data/pipeline.md ([#3566](https://github.com/alireza7575/career-ops-germany/issues/3566)) ([e0cad2e](https://github.com/alireza7575/career-ops-germany/commit/e0cad2e0077da2e6e85fc6df0f03e7ff21243275))
+* **web:** regenerate the lockfile for next 16.3.4 ([#4477](https://github.com/alireza7575/career-ops-germany/issues/4477)) ([71554e8](https://github.com/alireza7575/career-ops-germany/commit/71554e882d9f101b47f92c704a2613088e05a400))
+* **web:** reject malformed follow-up IDs ([#3482](https://github.com/alireza7575/career-ops-germany/issues/3482)) ([9fc269b](https://github.com/alireza7575/career-ops-germany/commit/9fc269b24404409caaafc27a06eeb53988738e1a))
+* **web:** require confirmed worker stream completion ([#4107](https://github.com/alireza7575/career-ops-germany/issues/4107)) ([7860d2f](https://github.com/alireza7575/career-ops-germany/commit/7860d2f146769a730e185cbda808020d18d6723b))
+* **web:** resolve engine scripts from the checkout, not the data root ([#4518](https://github.com/alireza7575/career-ops-germany/issues/4518)) ([ddb330a](https://github.com/alireza7575/career-ops-germany/commit/ddb330a7be6c0b230f6f0f5d7f5bfee6f63a80b8))
+* **web:** resolve the CV template from cv.template on dashboard runs ([#4035](https://github.com/alireza7575/career-ops-germany/issues/4035)) ([5076dc0](https://github.com/alireza7575/career-ops-germany/commit/5076dc0547bd81fbc12b1724e38a950084dfdcad))
+* **web:** retain tracker guard until canceled worker closes ([#4113](https://github.com/alireza7575/career-ops-germany/issues/4113)) ([026ef23](https://github.com/alireza7575/career-ops-germany/commit/026ef2350b2d6b580ba258db5a4cb340359ea171))
+* **web:** stop /api/apply/drive closing its stream twice on success ([#4039](https://github.com/alireza7575/career-ops-germany/issues/4039)) ([dd34e28](https://github.com/alireza7575/career-ops-germany/commit/dd34e28710265c78a91466617167e47dcb924999)), closes [#3966](https://github.com/alireza7575/career-ops-germany/issues/3966)
+* **web:** stop replacement when backups fail ([#4499](https://github.com/alireza7575/career-ops-germany/issues/4499)) ([54cef96](https://github.com/alireza7575/career-ops-germany/commit/54cef96c6b6472e545f49d7e96ae3b4a6967db0c))
+* **web:** surface a successful render's warnings instead of dropping them ([#3995](https://github.com/alireza7575/career-ops-germany/issues/3995)) ([89ec0ec](https://github.com/alireza7575/career-ops-germany/commit/89ec0ecf49052650cb9d3e53d3dae98ee0cba444))
+* **web:** sync package-lock.json with next@16.3.4 so npm ci works again ([#4481](https://github.com/alireza7575/career-ops-germany/issues/4481)) ([6326eb5](https://github.com/alireza7575/career-ops-germany/commit/6326eb5d3804e8cb20d28acd5701a4e603a301f9))
+* **web:** the logo resolver deletes accented letters to guess a domain, and caches the miss forever ([#3318](https://github.com/alireza7575/career-ops-germany/issues/3318)) ([#3319](https://github.com/alireza7575/career-ops-germany/issues/3319)) ([36e5056](https://github.com/alireza7575/career-ops-germany/commit/36e5056004703e3d89a4b82600eadb6d36e0016d))
+* **web:** the web tracker reader drops the Apply Link and Follow-up columns ([#3603](https://github.com/alireza7575/career-ops-germany/issues/3603)) ([4be56a3](https://github.com/alireza7575/career-ops-germany/commit/4be56a388dc53990015a17786c49453ac8d50b0f))
+* **web:** update vulnerable dependencies ([#4670](https://github.com/alireza7575/career-ops-germany/issues/4670)) ([077ff80](https://github.com/alireza7575/career-ops-germany/commit/077ff80bd0391db2df74dd57ee78002a580bc859))
+* **web:** validate profile updates before writing ([#4500](https://github.com/alireza7575/career-ops-germany/issues/4500)) ([b208464](https://github.com/alireza7575/career-ops-germany/commit/b2084646acdc2bc34ad48ed8b7292d48c3aa3561))
+* **web:** validate the saved cliId against what is installed before a run ([#4019](https://github.com/alireza7575/career-ops-germany/issues/4019)) ([00e2507](https://github.com/alireza7575/career-ops-germany/commit/00e2507055e5a458b56d6e9956b30d8147b8b17d))
+
+
+### Performance Improvements
+
+* **web:** reuse home data reads and reduce queue payload ([#4105](https://github.com/alireza7575/career-ops-germany/issues/4105)) ([6a14576](https://github.com/alireza7575/career-ops-germany/commit/6a14576ee1cf06f66a0d1b8b2b4ab5df827a891b))
+
 ## [0.13.0](https://github.com/career-ops-hq/career-ops/compare/web-v0.12.0...web-v0.13.0) (2026-10-01)
 
 
