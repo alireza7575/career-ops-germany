@@ -5,17 +5,19 @@ import { cn } from "@/lib/cn";
 import { CostBadge } from "@/components/cost/cost-badge";
 import type { ExploreMode } from "@/lib/explore";
 
-// Cost honesty rendered at the POINT OF CHOICE: free deterministic Scan (default)
-// vs token-spending AI search. The AI segment stays selectable even with no CLI —
+// Cost honesty rendered at the POINT OF CHOICE: free default Scan with optional
+// search-credit sources vs token-spending AI search. AI remains selectable without a CLI —
 // selecting it reveals the blocked state (more discoverable than a dead tab).
 export function ExploreModeToggle({
   mode,
   onChange,
   cliConfigured,
+  usesWebSearch,
 }: {
   mode: ExploreMode;
   onChange: (m: ExploreMode) => void;
   cliConfigured: boolean;
+  usesWebSearch: boolean;
 }) {
   return (
     <div className="flex w-full rounded-xl border border-border bg-surface/40 p-1 sm:inline-flex sm:w-auto">
@@ -31,7 +33,7 @@ export function ExploreModeToggle({
         <Compass className="size-4" />
         <span className="font-medium">Scan</span>
         <span className="hidden sm:inline-flex">
-          <CostBadge kind="free-network" size="xs" />
+          <CostBadge kind={usesWebSearch ? "search-credits" : "free-network"} size="xs" />
         </span>
       </button>
       <button

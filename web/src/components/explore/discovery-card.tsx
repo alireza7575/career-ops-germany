@@ -91,7 +91,7 @@ export function DiscoveryCard({ offer, inPipeline, evaluatedN }: { offer: Discov
         {unverified && (
           <span
             className="inline-flex items-center gap-1 rounded border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-300"
-            title="Found by AI on the public web — we can't confirm it's still live without opening it. Evaluating runs a real browser check and sets the verdict."
+            title="Found on the public web — we can't confirm it's still live without opening it. Evaluating runs a real browser check and sets the verdict."
           >
             <ShieldQuestion className="size-3" /> unverified
           </span>

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { X, Ban, Clock, MapPin, ChevronDown, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { ATS_LABEL, ATS_SOURCES, cleanChips, type AtsSource, type ExploreFilters } from "@/lib/explore";
+import { ATS_LABEL, ATS_SOURCES, WEB_SEARCH_SOURCES, cleanChips, type AtsSource, type ExploreFilters } from "@/lib/explore";
 
 const RECENCY = [
   { label: "24h", days: 1 },
@@ -152,7 +152,7 @@ export function FilterBuilder({
 
       <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
         <div className="min-w-[18rem]">
-          <Label hint="postings published in this window">
+          <Label hint={filters.ats.some((source) => WEB_SEARCH_SOURCES.includes(source)) ? "web-index date is a search hint; posting age unverified" : "postings published in this window"}>
             <span className="inline-flex items-center gap-1.5">
               <Clock className="size-3.5 text-muted" /> Posted within
             </span>
@@ -189,11 +189,12 @@ export function FilterBuilder({
                     on ? "border-brand/40 bg-brand-soft text-brand" : "border-border text-muted hover:text-foreground",
                   )}
                 >
-                  {ATS_LABEL[a]}
+                  {ATS_LABEL[a]}{WEB_SEARCH_SOURCES.includes(a) ? " · credits" : ""}
                 </button>
               );
             })}
           </div>
+          <p className="mt-1.5 text-[11px] text-faint">Indeed and LinkedIn use Serper search credits and require a server-side SERPER_API_KEY. Their results remain unverified until opened.</p>
         </div>
       </div>
 

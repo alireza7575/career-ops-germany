@@ -1,0 +1,84 @@
+# German software-search starter. Copy into YOUR data root as portals.yml.
+# Generic defaults: personalize titles, city, language and remote policy first.
+# API feeds produce leads; a live JD review establishes location/language fit.
+
+title_filter:
+  positive:
+    - "Software Engineer"
+    - "Software Developer"
+    - "Softwareentwickler"
+    - "Softwareentwicklung"
+    - ".NET"
+    - "C#"
+    - "Backend Engineer"
+    - "Backend Developer"
+    - "Full Stack"
+    - "Full-Stack"
+    - "Fullstack"
+    - "Product Engineer"
+    - "Application Engineer"
+    - "Build Engineer"
+    - "Forward Deployed Engineer"
+    - "Integration Engineer"
+    - "Applied AI"
+    - "AI Engineer"
+    - "Robotics"
+    - "Robotik"
+    - "Computer Vision"
+    - "Bildverarbeitung"
+  # Add exclusions for your own seniority and unwanted role families.
+  negative: []
+
+# No global location restriction: Bundesagentur queries Germany nationwide,
+# and Arbeitnow can include international leads. Add your own location_filter
+# and confirm hiring-country eligibility in the original posting.
+
+tracked_companies: []
+
+job_boards:
+  - name: Arbeitnow
+    provider: arbeitnow
+    max_pages: 10
+    enabled: true
+  - name: Bundesagentur - Software Germany
+    provider: arbeitsagentur
+    arbeitsagentur:
+      keywords:
+        - "Softwareentwickler"
+        - "Software Engineer"
+        - ".NET Entwickler"
+        - "Product Engineer"
+        - "Application Engineer"
+        - "Build Engineer"
+        - "Forward Deployed Engineer"
+        - "AI Engineer"
+        - "Robotik Softwareentwickler"
+      wo: "" # Nationwide; replace with your city for a local search.
+      umkreis: 50
+      days: 30
+      size: 100
+    enabled: true
+
+# These require an agent-led scan with web search. scan.mjs does not run them.
+search_queries:
+  - name: Germany - software and product engineering
+    query: '("Softwareentwickler" OR "Software Engineer" OR "Product Engineer" OR "Application Engineer" OR "Build Engineer") (Deutschland OR Germany) jobs'
+    enabled: true
+  - name: Germany - AI applications and customer deployment
+    query: '("AI Product Engineer" OR "AI Integration Engineer" OR "Forward Deployed Engineer" OR "Applied AI Engineer") (Deutschland OR Germany) jobs'
+    enabled: true
+  - name: EnglishJobs Germany - software and AI
+    query: 'site:englishjobs.de ("Software Engineer" OR "Product Engineer" OR "AI Engineer" OR "Forward Deployed")'
+    enabled: true
+  - name: Jobware Germany - software
+    query: 'site:jobware.de ("Softwareentwickler" OR "Software Engineer" OR ".NET" OR "Robotik")'
+    enabled: true
+  - name: JobStairs Germany - software
+    query: 'site:jobstairs.de ("Softwareentwickler" OR "Software Engineer" OR "Application Engineer" OR "AI Engineer")'
+    enabled: true
+  - name: StepStone Germany - software and AI
+    query: 'site:stepstone.de/stellenangebote-- ("Softwareentwickler" OR "Product Engineer" OR "AI Engineer" OR "Forward Deployed")'
+    enabled: true
+  - name: Kimeta Germany - software
+    query: 'site:kimeta.de ("Softwareentwickler" OR "Software Engineer" OR ".NET" OR "Robotik")'
+    enabled: true
