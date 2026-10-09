@@ -118,6 +118,7 @@ const PATTERNS = {
     awards: new RegExp(String.raw`<!--\s+AWARDS\s+-->[\s\S]*?` + HTML_BOUNDARY),
     skills: new RegExp(String.raw`<!--\s+SKILLS\s+-->[\s\S]*?` + HTML_END_SENTINEL),
     interests: new RegExp(String.raw`<!--\s+INTERESTS\s+-->[\s\S]*?` + HTML_BOUNDARY),
+    languages: new RegExp(String.raw`<!--\s+LANGUAGES\s+-->[\s\S]*?` + HTML_BOUNDARY),
   },
   tex: {
     // The LaTeX banner is `%%%%  Experience  %%%%` — mixed case, and not the
@@ -130,7 +131,7 @@ const PATTERNS = {
   },
 };
 
-export const OPTIONAL_SECTIONS = ['competencies', 'experience', 'projects', 'education', 'certifications', 'awards', 'interests', 'skills'];
+export const OPTIONAL_SECTIONS = ['competencies', 'experience', 'projects', 'education', 'certifications', 'awards', 'interests', 'languages', 'skills'];
 
 export function isEmptySection(payload, section) {
   const entries = payload?.[section];

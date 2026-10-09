@@ -461,6 +461,10 @@ export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEve
   const directories = selected.filter((source) => DIRECTORY_SOURCES.includes(source));
   const german = selected.filter((source): source is GermanSource => GERMAN_SOURCES.includes(source));
   const web = selected.filter((source) => WEB_SEARCH_SOURCES.includes(source));
+  let webMatchers: {
+    titlePasses: (title: string) => boolean;
+    keywords: { value: string; matches: (title: string) => boolean }[];
+  } | undefined;
   return runDiscoveryGroups({
     directories, german, web, onEvent,
     runDirectory: (emit: (event: ScanEvent) => void) => runDirectoryDiscovery({ ...filters, ats: directories }, emit),
@@ -468,10 +472,26 @@ export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEve
     runWeb: async (source: string) => {
       // Load only for selected web-index sources. A matcher-load failure must not
       // suppress results from directory or German provider groups.
-      const moduleUrl = pathToFileURL(rootScript("title-keywords")).href;
-      const { buildTitleFilter } = await import(/* webpackIgnore: true */ moduleUrl);
-      const titlePasses = buildTitleFilter({ positive: filters.positive, negative: filters.negative });
-      return searchWebBoard(source, filters, process.env.SERPER_API_KEY?.trim() || "", titlePasses);
+      if (!webMatchers) {
+        const moduleUrl = pathToFileURL(rootScript("title-keywords")).href;
+        const { buildTitleFilter } = await import(/* webpackIgnore: true */ moduleUrl);
+        webMatchers = {
+          titlePasses: buildTitleFilter({ positive: filters.positive, negative: filters.negative }),
+          keywords: filters.positive.filter((value) => value.trim()).map((value) => ({
+            value,
+            matches: buildTitleFilter({ positive: [value] }),
+          })),
+        };
+      }
+      const { titlePasses, keywords } = webMatchers;
+      const result = await searchWebBoard(source, filters, process.env.SERPER_API_KEY?.trim() || "", titlePasses);
+      return {
+        ...result,
+        offers: result.offers.map((offer) => ({
+          ...offer,
+          matchedKeyword: keywords.find(({ matches }) => matches(offer.title))?.value,
+        })),
+      };
     },
   });
 }

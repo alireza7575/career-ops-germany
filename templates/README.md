@@ -7,7 +7,7 @@ System-layer template files used by career-ops scripts and modes. These files ar
 | File | Used By | Purpose |
 |------|---------|---------|
 | `cv-template.html` | `generate-pdf.mjs` | HTML/CSS template for ATS-optimized CV PDFs |
-| `cv-template.{compact,executive,jake,leadership,modern}.html` | `generate-pdf.mjs`, `build-cv-html.mjs` (via `cv-templates.mjs`) | Named CV variants selectable per CV or as a `cv.template` default. Same placeholder tokens and ATS rules as `cv-template.html`. See detailed section below. |
+| `cv-template.{compact,executive,jake,leadership,modern,timeline}.html` | `generate-pdf.mjs`, `build-cv-html.mjs` (via `cv-templates.mjs`) | Named CV variants selectable per CV or as a `cv.template` default. Same placeholder tokens and ATS rules as `cv-template.html`. See detailed section below. |
 | `resume-template.html` | `generate-pdf.mjs` (via `--template`) | Resume-branded variant of `cv-template.html`. Same layout and placeholder tokens; differs in: `<title>` reads "Resume" instead of "CV", omits Certifications section (but keeps Awards & Honors), targets 1–2 page US/industry format. See detailed section below. |
 | `cv-template.tex` | `generate-latex.mjs` | LaTeX/Overleaf template for ATS-optimized CV PDFs |
 | `cv-template.cjk.tex` | `build-cv-latex.mjs --template=cjk`, `generate-latex.mjs` | CJK (Chinese/Japanese/Korean) variant of `cv-template.tex` — loads `fontspec`+`xeCJK`. Requires the `tectonic` engine (XeTeX backend); pdflatex still cannot render CJK. See "CJK variant" below and `modes/latex.md`. |
@@ -40,7 +40,7 @@ Getting this wrong is safe, by design. If the sentinel is missing, the empty-Ski
 
 ### Named CV templates
 
-Five alternatives to the base design, discovered by filename (`cv-template.<name>.html`) and resolved by `cv-templates.mjs`:
+Six alternatives to the base design, discovered by filename (`cv-template.<name>.html`) and resolved by `cv-templates.mjs`:
 
 | Name | Design | Suits |
 |------|--------|-------|
@@ -49,6 +49,9 @@ Five alternatives to the base design, discovered by filename (`cv-template.<name
 | `executive` | Serif, centred header, ruled small-caps headings, no colour fills | Banks, funds, traditional enterprises |
 | `leadership` | Executive hybrid: short leadership summary, competencies block ahead of the chronology | Senior and leadership applications |
 | `jake` | HTML port of the widely used "Jake's Resume" LaTeX layout: two-row job headers, full-width ruled headings | Engineering roles expecting the familiar format |
+| `timeline` | Centered header, navy accents, and a vertical experience timeline | Single-column chronological CVs |
+
+The `timeline` variant includes a separate optional language section. Supply `languages` entries with `category` and `items` (for example, `{ "category": "Example language", "items": "Fluent" }`). Its headline uses the existing `candidate.title` field.
 
 Pick one for a single CV, or set a default in `config/profile.yml`:
 
@@ -62,7 +65,7 @@ node cv-templates.mjs list cv            # names + display names
 node cv-templates.mjs resolve cv modern  # absolute path to fill
 ```
 
-**These are not "just CSS".** Each carries the same contract as the base template, and `tests/cv-named-templates.test.mjs` enforces it: the `{{NAME}}`/`{{EXPERIENCE}}`/`{{EDUCATION}}` placeholders, every optional-section marker plus the `<!-- END -->` sentinel described above, a static system font stack (no bundled woff2), and ligatures disabled. Copy an existing variant when adding a sixth — a template that only looks right will drop a candidate's awards or leave a bare Skills heading.
+**These are not "just CSS".** Each carries the same contract as the base template, and `tests/cv-named-templates.test.mjs` enforces it: the `{{NAME}}`/`{{EXPERIENCE}}`/`{{EDUCATION}}` placeholders, every optional-section marker plus the `<!-- END -->` sentinel described above, a static system font stack (no bundled woff2), and ligatures disabled. Copy an existing variant when adding another — a template that only looks right will drop a candidate's awards or leave a bare Skills heading.
 
 **Single column, always.** All colour in these variants is decoration over a strictly top-to-bottom text flow, so PDF extraction order is unaffected. Multi-column page layouts are the classic ATS parse failure and none of these use one.
 

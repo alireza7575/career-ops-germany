@@ -1,9 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { existsSync } from "node:fs";
+import * as nodeModule from "node:module";
+import { extname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ATS_SOURCES, DEFAULT_FILTERS, FREE_SOURCES, WEB_SEARCH_SOURCES, filtersToParams, paramsToFilters } from "../../src/lib/explore.ts";
 import { buildWebBoardQuery, searchWebBoard, validBoardUrl } from "../../src/lib/core/web-boards.mjs";
 import { buildTitleFilter } from "../../../title-keywords.mjs";
 import { runDiscoveryGroups } from "../../src/lib/core/discovery-groups.mjs";
+import "../helpers/web-ts-alias-loader.mjs";
+nodeModule.registerHooks?.({
+  resolve(specifier, context, nextResolve) {
+    if (specifier.startsWith(".") && !extname(specifier)) {
+      const candidate = new URL(`${specifier}.ts`, context.parentURL);
+      if (existsSync(fileURLToPath(candidate))) return nextResolve(candidate.href, context);
+    }
+    return nextResolve(specifier, context);
+  },
+});
+const runDiscovery = nodeModule.registerHooks
+  ? (await import("../../src/lib/core/scan.ts")).runDiscovery
+  : null;
 
 const filters = { ...DEFAULT_FILTERS, positive: ["Data Engineer"], negative: ["Senior"], allow: ["Berlin"], alwaysAllow: [], sinceDays: 7, limitPerAts: 50 };
 const titlePasses = buildTitleFilter({ positive: filters.positive, negative: filters.negative });
@@ -62,6 +79,38 @@ test("Serper results accept only matching board URLs and remain unverified", asy
   assert.equal(result.offers[0].verification, "unconfirmed");
   assert.equal(validBoardUrl("linkedin", "https://linkedin.com/jobs/view/123"), "https://linkedin.com/jobs/view/123");
   assert.equal(validBoardUrl("linkedin", "http://linkedin.com/jobs/view/123"), null);
+});
+
+test("web discovery labels matches with core word and stem semantics without live search", { skip: !runDiscovery && "requires synchronous Node module hooks" }, async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.SERPER_API_KEY;
+  const originalCodeRoot = process.env.CAREER_OPS_CODE_ROOT;
+  const events = [];
+  let requests = 0;
+  try {
+    process.env.SERPER_API_KEY = "test-key";
+    process.env.CAREER_OPS_CODE_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+    globalThis.fetch = async () => {
+      requests++;
+      return { ok: true, json: async () => ({ organic: [
+        { title: "Intern - Acme | Indeed", link: "https://de.indeed.com/viewjob?jk=1" },
+        { title: "Internship - Acme | Indeed", link: "https://de.indeed.com/viewjob?jk=2" },
+        { title: "Engineering Lead - Acme | Indeed", link: "https://de.indeed.com/viewjob?jk=3" },
+        { title: "AI Researcher - Acme | Indeed", link: "https://de.indeed.com/viewjob?jk=4" },
+        { title: "Nail Technician - Acme | Indeed", link: "https://de.indeed.com/viewjob?jk=5" },
+      ] }) };
+    };
+    const offers = await runDiscovery({ ...filters, positive: ["word:intern", "stem:engineer", "AI"], negative: [], ats: ["indeed"] }, (event) => events.push(event));
+    assert.equal(requests, 1);
+    assert.deepEqual(offers.map(({ matchedKeyword }) => matchedKeyword), ["word:intern", "stem:engineer", "AI"]);
+    assert.deepEqual(events.filter((event) => event.kind === "offer").map(({ offer }) => offer.matchedKeyword), ["word:intern", "stem:engineer", "AI"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.SERPER_API_KEY;
+    else process.env.SERPER_API_KEY = originalKey;
+    if (originalCodeRoot === undefined) delete process.env.CAREER_OPS_CODE_ROOT;
+    else process.env.CAREER_OPS_CODE_ROOT = originalCodeRoot;
+  }
 });
 
 test("Serper source failure is isolated in result metadata", async () => {
