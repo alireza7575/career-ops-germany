@@ -8,6 +8,34 @@ import test from "node:test";
 
 const runner = fileURLToPath(new URL("../../src/lib/core/german-board-runner.mjs", import.meta.url));
 
+test("Arbeitnow reports a capped raw feed even when no titles match", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-german-cap-"));
+  try {
+    fs.mkdirSync(path.join(dir, "providers"));
+    fs.copyFileSync(new URL("../../../providers/arbeitnow.mjs", import.meta.url), path.join(dir, "providers", "arbeitnow.mjs"));
+    fs.writeFileSync(path.join(dir, "providers", "_http.mjs"), `export const makeHttpCtx = () => ({ fetchJson: async () => ({
+      data: Array.from({ length: 100 }, (_, i) => ({ title: "Designer", url: "https://www.arbeitnow.com/view/" + i })),
+      links: { next: "https://www.arbeitnow.com/api/job-board-api?page=3" }
+    }) });`);
+    fs.writeFileSync(path.join(dir, "title-keywords.mjs"), "export const buildTitleFilter = () => (title) => title.includes('Data');");
+    fs.writeFileSync(path.join(dir, "scan.mjs"), "export const buildLocationFilter = () => () => true; export const buildPostedDateFilter = () => () => true;");
+    const portals = path.join(dir, "portals.yml");
+    fs.writeFileSync(portals, "title_filter:\n  positive: [Data]\n");
+    const result = spawnSync(process.execPath, [runner, dir, "arbeitnow", portals, "7", "150"], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(result.status, 0, result.stderr);
+    const events = result.stdout.trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    assert.deepEqual(events, [{ kind: "summary", scanned: 1, matches: 0, capHit: true }]);
+    fs.writeFileSync(path.join(dir, "providers", "_http.mjs"), "export const makeHttpCtx = () => ({ fetchJson: async () => ({ data: [], links: { next: null } }) });");
+    const complete = spawnSync(process.execPath, [runner, dir, "arbeitnow", portals, "7", "150"], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(complete.status, 0, complete.stderr);
+    assert.equal(JSON.parse(complete.stdout).capHit, false);
+  } finally {
+    const rel = path.relative(os.tmpdir(), dir);
+    assert.ok(rel && !rel.startsWith("..") && !path.isAbsolute(rel));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("German runner calls an existing provider and streams filtered, dated offers", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-german-runner-"));
   try {

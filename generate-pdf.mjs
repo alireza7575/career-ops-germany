@@ -293,6 +293,10 @@ const SECTION_ALIASES = new Map([
   ['awards & honours', 'awards'],
   ['skills', 'skills'],
   ['technical skills', 'skills'],
+  ['languages', 'languages'],
+  ['language skills', 'languages'],
+  ['sprachen', 'languages'],
+  ['sprachkenntnisse', 'languages'],
   ['interests', 'interests'],
   // Polish — the vocabulary documented in modes/pl/README.md, plus the word-order
   // variants that turn up in practice (both "Kompetencje kluczowe" and

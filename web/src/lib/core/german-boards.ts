@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { rootScript, careerOpsRoot } from "@/lib/career-ops";
+import { rootScript } from "@/lib/career-ops";
 import { writeTempPortals, cleanupTempPortals } from "./portals";
 import type { DiscoveredOffer, ExploreFilters, ScanEvent } from "@/lib/explore";
 
@@ -10,13 +10,14 @@ export type GermanRun = {
   companiesScanned: number;
   unreachable: number;
   incomplete: string[];
+  capHit: boolean;
   datasetStatus: Record<string, "ok" | "empty">;
 };
 
 function runOne(source: GermanSource, filters: ExploreFilters, onEvent: (event: ScanEvent) => void): Promise<GermanRun> {
   const tempPortals = writeTempPortals(filters);
   const codeRoot = path.dirname(rootScript("scan"));
-  const runner = path.join(codeRoot, "web", "src", "lib", "core", "german-board-runner.mjs");
+  const runner = path.join(/* turbopackIgnore: true */ process.cwd(), "src", "lib", "core", "german-board-runner.mjs");
   onEvent({ kind: "atsStart", ats: source, companies: 1 });
   return new Promise((resolve) => {
     const offers: DiscoveredOffer[] = [];
@@ -25,6 +26,7 @@ function runOne(source: GermanSource, filters: ExploreFilters, onEvent: (event: 
     let settled = false;
     let timedOut = false;
     let scanned = 0;
+    let capHit = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (failed: boolean) => {
       if (settled) return;
@@ -39,18 +41,22 @@ function runOne(source: GermanSource, filters: ExploreFilters, onEvent: (event: 
         companiesScanned: scanned,
         unreachable: failed ? 1 : 0,
         incomplete: failed ? [source] : [],
+        capHit,
         datasetStatus: { [source]: failed ? "empty" : "ok" },
       });
     };
     const handleLine = (line: string) => {
       try {
-        const row = JSON.parse(line) as { kind: string; offer?: DiscoveredOffer; scanned?: number };
+        const row = JSON.parse(line) as { kind: string; offer?: DiscoveredOffer; scanned?: number; capHit?: boolean };
         if (row.kind === "offer" && row.offer?.url) {
           const offer = { ...row.offer, ats: source };
           offers.push(offer);
           onEvent({ kind: "offer", offer });
           onEvent({ kind: "progress", ats: source, scanned: 1, total: 1, matches: offers.length });
-        } else if (row.kind === "summary") scanned = row.scanned ?? 1;
+        } else if (row.kind === "summary") {
+          scanned = row.scanned ?? 1;
+          capHit = row.capHit === true;
+        }
       } catch {
         // A malformed line cannot discard already streamed offers.
       }
@@ -90,6 +96,7 @@ export async function runGermanDiscovery(sources: GermanSource[], filters: Explo
     companiesScanned: runs.reduce((n, run) => n + run.companiesScanned, 0),
     unreachable: runs.reduce((n, run) => n + run.unreachable, 0),
     incomplete: runs.flatMap((run) => run.incomplete),
+    capHit: runs.some((run) => run.capHit),
     datasetStatus: Object.assign({}, ...runs.map((run) => run.datasetStatus)),
   };
 }

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listTemplates } from '../cv-templates.mjs';
+import { chromium } from 'playwright';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const dir = mkdtempSync(join(tmpdir(), 'cv-shipped-templates-'));
@@ -42,6 +43,11 @@ writeFileSync(input, JSON.stringify({
   certifications: [],
   awards: [],
   skills: [{ category: 'Languages', items: ['Go', 'TypeScript'] }],
+  languages: [
+    { category: 'English', items: 'C1' },
+    { category: 'German', items: 'B2' },
+    { category: 'French', items: 'A2' },
+  ],
 }));
 
 const templates = listTemplates('cv');
@@ -67,3 +73,26 @@ for (const template of templates) {
     assert.match(html, /Berlin, Germany/);
   });
 }
+
+test('timeline language entries occupy three columns', async () => {
+  const output = join(dir, 'timeline.html');
+  execFileSync(process.execPath, ['build-cv-html.mjs', input, output, join(ROOT, 'templates', 'cv-template.timeline.html')], {
+    cwd: ROOT,
+    encoding: 'utf-8',
+  });
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(readFileSync(output, 'utf-8'));
+    const layout = await page.locator('.languages-grid > .skills-grid').evaluate((grid) => ({
+      display: getComputedStyle(grid).display,
+      columns: getComputedStyle(grid).gridTemplateColumns.split(' ').length,
+      lefts: [...grid.querySelectorAll('.skill-item')].map(item => Math.round(item.getBoundingClientRect().left)),
+    }));
+    assert.equal(layout.display, 'grid');
+    assert.equal(layout.columns, 3);
+    assert.equal(new Set(layout.lefts).size, 3);
+  } finally {
+    await browser.close();
+  }
+});

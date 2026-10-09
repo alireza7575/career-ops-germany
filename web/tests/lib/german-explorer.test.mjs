@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import * as nodeModule from "node:module";
-import { extname } from "node:path";
+import { extname, join, relative, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ATS_SOURCES, DEFAULT_FILTERS, FREE_SOURCES, WEB_SEARCH_SOURCES, filtersToParams, paramsToFilters } from "../../src/lib/explore.ts";
 import { buildWebBoardQuery, searchWebBoard, validBoardUrl } from "../../src/lib/core/web-boards.mjs";
@@ -169,4 +170,69 @@ test("missing search key marks only selected web-index source incomplete", async
   assert.deepEqual(summary.incomplete, ["indeed"]);
   assert.equal(summary.unreachable, 1);
   assert.equal(summary.datasetStatus.indeed, "empty");
+});
+
+test("German and web groups start before the directory group finishes", async () => {
+  const started = [];
+  const events = [];
+  let release;
+  const directoryWait = new Promise((resolve) => { release = resolve; });
+  const run = runDiscoveryGroups({
+    directories: ["lever"], german: ["arbeitnow"], web: ["indeed"], onEvent: (event) => events.push(event),
+    runDirectory: async (emit) => {
+      started.push("directory");
+      await directoryWait;
+      emit({ kind: "summary", companiesScanned: 1, unreachable: 0, datasetStatus: { lever: "ok" } });
+      return [];
+    },
+    runGerman: async () => {
+      started.push("german");
+      return { offers: [], companiesScanned: 1, unreachable: 0, incomplete: [], capHit: true, datasetStatus: { arbeitnow: "ok" } };
+    },
+    runWeb: async () => {
+      started.push("indeed");
+      return { offers: [], searched: 1, unreachable: 0 };
+    },
+  });
+  try {
+    assert.deepEqual(started, ["directory", "german", "indeed"]);
+  } finally {
+    release();
+    await run;
+  }
+  const summary = events.find((event) => event.kind === "summary");
+  assert.equal(summary.companiesScanned, 3);
+  assert.equal(summary.capHit, true);
+});
+
+test("German discovery uses the web runner with a separate engine and keeps its cap metadata", { skip: !runDiscovery && "requires synchronous Node module hooks" }, async () => {
+  const engine = mkdtempSync(join(os.tmpdir(), "career-ops-german-engine-"));
+  const priorCwd = process.cwd();
+  const priorRoot = process.env.CAREER_OPS_CODE_ROOT;
+  const events = [];
+  try {
+    mkdirSync(`${engine}/providers`);
+    writeFileSync(`${engine}/providers/arbeitnow.mjs`, `export default { fetch: async () => [
+      { title: "Data Engineer", url: "https://example.test/1", company: "Acme" },
+      { title: "Data Engineer", url: "https://example.test/2", company: "Acme" }
+    ] };`);
+    writeFileSync(`${engine}/providers/_http.mjs`, "export const makeHttpCtx = () => ({ fetchJson: async () => ({}) });");
+    writeFileSync(`${engine}/title-keywords.mjs`, "export const buildTitleFilter = () => () => true;");
+    writeFileSync(`${engine}/scan.mjs`, "export const buildLocationFilter = () => () => true; export const buildPostedDateFilter = () => () => true;");
+    process.chdir(fileURLToPath(new URL("../../", import.meta.url)));
+    process.env.CAREER_OPS_CODE_ROOT = engine;
+    const offers = await runDiscovery({ ...filters, ats: ["arbeitnow"], limitPerAts: 1 }, (event) => events.push(event));
+    assert.equal(offers.length, 1);
+    const summary = events.find((event) => event.kind === "summary");
+    assert.equal(summary.capHit, true);
+    assert.equal(summary.unreachable, 0);
+    assert.equal(summary.datasetStatus.arbeitnow, "ok");
+  } finally {
+    process.chdir(priorCwd);
+    if (priorRoot === undefined) delete process.env.CAREER_OPS_CODE_ROOT;
+    else process.env.CAREER_OPS_CODE_ROOT = priorRoot;
+    const rel = relative(os.tmpdir(), engine);
+    assert.ok(rel && !rel.startsWith("..") && !isAbsolute(rel));
+    rmSync(engine, { recursive: true, force: true });
+  }
 });

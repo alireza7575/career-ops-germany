@@ -33,13 +33,26 @@ if (!codeRoot || !["arbeitsagentur", "arbeitnow"].includes(source) || !portalsPa
     const locationPasses = buildLocationFilter(config.location_filter);
     const cutoff = new Date(Date.now() - sinceDays * 86_400_000).toISOString().slice(0, 10);
     const datePasses = buildPostedDateFilter(cutoff);
-    const rows = await provider.fetch(entry, makeHttpCtx());
+    let capHit = source === "arbeitsagentur" && positives.length > entry.arbeitsagentur.keywords.length;
+    const ctx = makeHttpCtx();
+    const fetchJson = ctx.fetchJson;
+    ctx.fetchJson = async (url, options) => {
+      const json = await fetchJson(url, options);
+      if (source === "arbeitnow" && Number(new URL(url).searchParams.get("page")) === entry.max_pages
+        && json?.data?.length >= 100 && json.links?.next !== null) capHit = true;
+      if (source === "arbeitsagentur" && json?.ergebnisliste?.length >= entry.arbeitsagentur.size) capHit = true;
+      return json;
+    };
+    const rows = await provider.fetch(entry, ctx);
     const seen = new Set();
     let count = 0;
     for (const row of rows) {
-      if (count >= limit) break;
       if (!row?.url || !row.title || seen.has(row.url)) continue;
       if (!titlePasses(row.title) || !locationPasses(row.location, row.url, row.title) || !datePasses(row.postedAt)) continue;
+      if (count >= limit) {
+        capHit = true;
+        break;
+      }
       seen.add(row.url);
       count++;
       process.stdout.write(JSON.stringify({ kind: "offer", offer: {
@@ -51,7 +64,7 @@ if (!codeRoot || !["arbeitsagentur", "arbeitnow"].includes(source) || !portalsPa
         source: `${source}-provider`,
       } }) + "\n");
     }
-    process.stdout.write(JSON.stringify({ kind: "summary", scanned: 1, matches: count }) + "\n");
+    process.stdout.write(JSON.stringify({ kind: "summary", scanned: 1, matches: count, capHit }) + "\n");
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : "German provider failed"}\n`);
     process.exitCode = 1;
