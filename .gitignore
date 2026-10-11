@@ -258,3 +258,12 @@ documents/*
 # PII (e.g. cv/jane-doe-master-cv.pdf). #1723
 data/intake-state.json
 data/agent-inbox.md
+
+# Local previews and reports can contain personal career data.
+/tmp/
+/reports/*
+!/reports/.gitkeep
+
+# Ignore environment variants while keeping the public template.
+.env.*
+!.env.example
