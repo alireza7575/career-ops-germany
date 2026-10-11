@@ -34,6 +34,7 @@ import { stripEmptySections } from './cv-sections-core.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { hasRequiredFields, validatePayload } from './lib/cv-payload-schema.mjs';
 import { PAGE_WIDTHS, resolvePageFormat } from './lib/page-format.mjs';
+import { PARTIAL_SECTIONS, checkDeclaredSections } from './lib/template-manifest.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_ROOT = getCareerOpsRoot();
@@ -309,19 +310,27 @@ function fillEntry(entryTemplate, blocks, fields, blockValues) {
 function loadSectionPartials(templatePath) {
   const sectionsDir = join(dirname(templatePath), 'sections');
   const partials = new Map();
+  const { declared, missing } = checkDeclaredSections(templatePath);
+  if (missing.length) {
+    throw new Error(`Template ${templatePath} declares missing partials: ${missing.map((name) => `sections/${name}.html`).join(', ')}`);
+  }
   if (!existsSync(sectionsDir)) return partials;
 
-  const sectionNames = [
-    'competencies', 'experience', 'projects', 'education', 'certifications', 'awards', 'skills',
-  ];
-  for (const name of sectionNames) {
+  for (const name of PARTIAL_SECTIONS) {
     const partialPath = join(sectionsDir, `${name}.html`);
     if (!existsSync(partialPath)) continue;
     try {
       const source = readFileSync(partialPath, 'utf-8');
-      partials.set(name, parsePartial(source));
-    } catch {
-      // Silently skip malformed partial files — fall back to built-in builder.
+      const parsed = parsePartial(source);
+      if (declared?.has(name) && !parsed.entryTemplate) {
+        throw new Error('ENTRY zone is empty');
+      }
+      partials.set(name, parsed);
+    } catch (error) {
+      if (declared?.has(name)) {
+        throw new Error(`malformed declared partial ${partialPath.replace(/\\/g, '/')}: ${error.message}`);
+      }
+      // Undeclared malformed partials retain the built-in fallback.
     }
   }
   return partials;

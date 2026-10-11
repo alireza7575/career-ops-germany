@@ -16544,13 +16544,14 @@ try {
       '',
     );
     const defaults = emitted?.cadenceDefaults;
-    const cadKeys = Object.keys(DEFAULT_CADENCE);
+    const cadKeys = Object.keys(DEFAULT_CADENCE).filter((k) => k !== 'scope');
     const schemaOk = defaults && typeof defaults === 'object'
       && cadKeys.length > 0
       && cadKeys.every((k) => Number.isInteger(defaults[k]) && defaults[k] >= 0)
-      && Object.keys(defaults).length === cadKeys.length;
+      && defaults.scope === 'all'
+      && Object.keys(defaults).length === cadKeys.length + 1;
     if (schemaOk) {
-      pass('followup-cadence --json emits a complete integer cadenceDefaults for the web to derive from (#2369)');
+      pass('followup-cadence --json emits scope and complete integer cadenceDefaults for the web (#2369)');
     } else {
       fail(`cadenceDefaults payload broken — the web cadence form loses its baseline (#2369): ${JSON.stringify(defaults)}`);
     }
@@ -16580,7 +16581,8 @@ try {
     // handing the form one of the user's own overrides as the baseline they
     // would be reverting to, which is the #2369 mistake exactly.
     const emptyOk = emptyDefaults && typeof emptyDefaults === 'object'
-      && Object.keys(emptyDefaults).length === cadKeys.length
+      && emptyDefaults.scope === DEFAULT_CADENCE.scope
+      && Object.keys(emptyDefaults).length === cadKeys.length + 1
       && cadKeys.every((k) => Number.isInteger(emptyDefaults[k]) && emptyDefaults[k] === DEFAULT_CADENCE[k]);
     if (emptyOk) {
       pass('followup-cadence emits cadenceDefaults even when the tracker is empty (#4005)');
