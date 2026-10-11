@@ -4,11 +4,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
+import { fileURLToPath } from "node:url";
 import "../helpers/web-ts-alias-loader.mjs";
 import { buildPrompt, isShellSafeRootPath } from "../../src/lib/run-prompts.mjs";
 import { spawnGeneratePdf } from "../../src/lib/pdf-render.mjs";
 
 const skipTs = !process.features?.typescript && "Node cannot import TypeScript routes";
+process.env.CAREER_OPS_CODE_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const lib = skipTs ? null : await import("@/lib/career-ops");
 const pipeline = skipTs ? null : await import("@/lib/core/pipeline");
 const portals = skipTs ? null : await import("../../src/app/api/portals/route.ts");

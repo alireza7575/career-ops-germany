@@ -10,6 +10,7 @@ import * as yaml from "js-yaml";
 // Same Node alias-loader convention as apply-cv-resolver.test.mjs. Import the
 // real route handlers and safe writer, with only CAREER_OPS_ROOT redirected.
 const webSrc = fileURLToPath(new URL("../../src/", import.meta.url));
+process.env.CAREER_OPS_CODE_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const loader = `
   import { existsSync } from "node:fs";
   import path from "node:path";
