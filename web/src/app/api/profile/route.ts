@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 // Merge-safe writer for config/profile.yml (a USER-LAYER file — DATA_CONTRACT:
 // never clobber the user's archetypes/narrative/proof-points). On first create we
-// seed from config/profile.example.yml; on an existing file we deep-merge ONLY the
+// seed with market defaults; on an existing file we deep-merge ONLY the
 // proposed keys, write atomically (temp + rename), and only ever via the confirm-
 // gated setProfile action. The web orchestrates the real file — no parallel store.
 
@@ -77,12 +77,9 @@ export async function POST(req: Request) {
   // "no profile yet" (safe to seed from the example) from "profile EXISTS but is
   // malformed" (NEVER overwrite — that would silently destroy the user's data).
   if (!fs.existsSync(file)) {
-    try {
-      base = (yaml.load(fs.readFileSync(path.join(root, "config", "profile.example.yml"), "utf8")) as Record<string, unknown>) || {};
-      seeded = Object.keys(base).length > 0;
-    } catch {
-      base = {};
-    }
+    // The shipped example contains another person's CV facts and target roles.
+    base = { language: { output: "en", modes_dir: "modes/de" } };
+    seeded = true;
   } else {
     let parsed: unknown;
     try {

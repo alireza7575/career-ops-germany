@@ -16,6 +16,7 @@ export const PROFILE_CADENCE_KEYS = [
   "interview_thankyou_days",
 ] as const;
 export type ProfileCadenceKey = (typeof PROFILE_CADENCE_KEYS)[number];
+export type FollowupScope = "off" | "interviews" | "all";
 
 /* CADENCE_DEFAULTS used to live here as a hand-copy of DEFAULT_CADENCE in
    followup-cadence.mjs, kept in sync by a comment. It is gone (#2369): the

@@ -66,6 +66,10 @@ export function rootScript(nameNoExt: string): string {
   return resolveRootScript(resolveCodeRoot(process.cwd(), process.env), nameNoExt);
 }
 
+export function careerOpsCodeRoot(): string {
+  return resolveCodeRoot(process.cwd(), process.env);
+}
+
 // Feature-detect the core's `tracker.mjs delete --num` row-delete (#1200) by probing
 // the local script source — older checkouts lack it, so the delete UI hides itself.
 export function trackerCanDelete(): boolean {
@@ -481,7 +485,7 @@ export type LanguageConfig = {
   output: string;
   /**
    * language.modes_dir's PRIMARY declared market, normalized without a
-   * trailing slash. Default "modes". When modes_dir is an array (#3793 —
+   * trailing slash. Default "modes/de" in this fork. When modes_dir is an array (#3793 —
    * multiple simultaneous target markets), this is `modesDirs[0]`: the
    * evaluation-mode file can only come from one market at a time.
    */
@@ -489,12 +493,12 @@ export type LanguageConfig = {
   /**
    * Every market declared in language.modes_dir, primary first. A plain
    * string config normalizes to a single-element array; the default (no
-   * modes_dir configured) is `["modes"]`. Prefer this over `modesDir` when a
+   * modes_dir configured) is `["modes/de"]`. Prefer this over `modesDir` when a
    * caller needs to know about ALL declared candidate markets, not just the
    * primary one (#3793).
    */
   modesDirs: string[];
-  /** The primary market's evaluation-mode file, repo-root-relative. Default "modes/oferta.md". */
+  /** The primary market's evaluation-mode file, repo-root-relative. */
   evalModeFile: string;
 };
 
@@ -553,12 +557,13 @@ function resolveEvalModeFile(root: string, modesDir: string): string {
 
 /**
  * Read the language configuration. Never throws: a missing or malformed
- * profile.yml yields the English/global default, because a broken config
+ * profile.yml yields the English/German default in this fork, because a broken config
  * should degrade the market vocabulary, not block every evaluation.
  */
 export function readLanguageConfig(): LanguageConfig {
   const root = careerOpsRoot();
-  let modesDirs = ["modes"];
+  const codeRoot = careerOpsCodeRoot();
+  let modesDirs = ["modes/de"];
   let output = "en";
   try {
     const parsed = yaml.load(fs.readFileSync(path.join(root, "config", "profile.yml"), "utf8"));
@@ -570,14 +575,14 @@ export function readLanguageConfig(): LanguageConfig {
         // modes_dir may be a single declared market (string, the historical
         // shape) or a list of simultaneously declared candidate markets
         // (#3793). Either shape normalizes to a string array here; an empty
-        // or fully-invalid list falls back to the ["modes"] default.
+        // or fully-invalid list falls back to the German default.
         const rawModesDir = l.modes_dir;
         const rawCandidates = Array.isArray(rawModesDir) ? rawModesDir : [rawModesDir];
         const resolveDeclaredDir = (value: unknown): string | null => {
           if (typeof value !== "string" || !value.trim()) return null;
           const candidate = value.trim().replace(/\/+$/, "");
           if (!MODES_DIR_RE.test(candidate)) return null;
-          return fs.existsSync(path.join(root, candidate)) ? candidate : null;
+          return fs.existsSync(path.join(codeRoot, candidate)) ? candidate : null;
         };
         // The first declared entry is primary. Do not filter it away and
         // silently promote a later market into the evaluation slot. This
@@ -598,5 +603,5 @@ export function readLanguageConfig(): LanguageConfig {
     /* no profile yet, or malformed — defaults are correct */
   }
   const modesDir = modesDirs[0];
-  return { output, modesDir, modesDirs, evalModeFile: resolveEvalModeFile(root, modesDir) };
+  return { output, modesDir, modesDirs, evalModeFile: resolveEvalModeFile(codeRoot, modesDir) };
 }

@@ -13,6 +13,7 @@ import {
   type CadenceEntry,
   type CadenceMetadata,
   type Urgency,
+  type FollowupScope,
   daysHeatClass,
   followupStatusTone,
   oxfordJoin,
@@ -78,6 +79,7 @@ type CadenceResponse = {
   available: boolean;
   metadata: CadenceMetadata | null;
   entries: CadenceEntry[];
+  cadenceConfig?: { scope?: FollowupScope } | null;
 };
 
 export function FollowupsView() {
@@ -138,6 +140,7 @@ export function FollowupsView() {
 
   const entries = useMemo(() => (data?.available ? data.entries : []), [data]);
   const meta = data?.available ? data.metadata : null;
+  const scope = data?.cadenceConfig?.scope ?? "all";
 
   const filtering = tab !== "ALL" || q.trim().length > 0;
   const filtered = useMemo(() => {
@@ -246,7 +249,10 @@ export function FollowupsView() {
         filtering ? (
           <EmptyPanel title="No matches" body="Try a different urgency filter or clear the search." />
         ) : (
-          <EmptyPanel title="Nothing to chase" body="No active applications need a follow-up. Apply to roles (or update statuses) and the cadence starts tracking them." />
+          <EmptyPanel
+            title={scope === "off" ? "Follow-ups off" : "Nothing to chase"}
+            body={scope === "off" ? "Follow-up reminders are turned off in Settings." : scope === "interviews" ? "No interviews currently need a follow-up." : "No active applications need a follow-up. Apply to roles (or update statuses) and the cadence starts tracking them."}
+          />
         )
       ) : (
         <div className="mt-4 overflow-x-auto rounded-2xl border border-border">

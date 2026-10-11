@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
-import { careerOpsRoot } from "@/lib/career-ops";
+import { careerOpsRoot, rootScript } from "@/lib/career-ops";
 import { setInboxSkip } from "@/lib/inbox-skip.mjs";
 
 export const runtime = "nodejs";
@@ -41,7 +41,7 @@ export async function POST(req: Request) {
 
   const root = careerOpsRoot();
   const file = path.join(root, "data", "pipeline.md");
-  const lockModule = path.join(root, "pipeline-lock.mjs");
+  const lockModule = rootScript("pipeline-lock");
   if (!fs.existsSync(lockModule)) {
     return NextResponse.json(
       { error: "inbox skip needs the career-ops scripts; this root has data only", code: "core-script-missing" },

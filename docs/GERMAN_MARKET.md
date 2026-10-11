@@ -15,6 +15,10 @@ The starter is for software roles across Germany, not a verified-match list. Its
 
 For German-market evaluation vocabulary, set language.modes_dir to modes/de in your own config/profile.yml. Set language.output independently to en or de for the prose you want.
 
+The web app uses the code checkout for modes, templates and scripts, and the selected data root for CVs, profile, portals, reports and tracker. In this fork, a new profile created through the web app starts with `language.modes_dir: modes/de` and `language.output: en`, plus only the details you enter. Existing profile settings are preserved. When `modes_dir` is absent, the web UI defaults to the German mode; an explicit market setting takes precedence. The Config page shows the effective market and output language. The CLI reads the profile setting directly, so add `modes_dir: modes/de` to an existing profile if you want its CLI evaluations to use the same market.
+
+The web app seeds a missing `portals.yml` from `templates/portals.germany.example.yml` in the code checkout when you save your target roles. Existing portal settings are merged without replacing tracked companies. Search results still require posting-level verification of location and hiring eligibility.
+
 ## Web Explorer
 
 The Explorer includes Bundesagentur and Arbeitnow alongside the upstream ATS sources. Optional Indeed Germany and LinkedIn discovery uses Serper search credits; those sources are not enabled by default. Supply SERPER_API_KEY through the server process environment if you want them. Never commit the key.

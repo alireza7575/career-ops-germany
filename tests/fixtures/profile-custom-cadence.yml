@@ -8,6 +8,7 @@
 name: Test Fixture
 email: fixture@example.test
 followup_cadence:
+  scope: interviews
   applied_first_days: 3
   applied_subsequent_days: 30
   applied_max_followups: 5

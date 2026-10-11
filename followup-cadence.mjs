@@ -54,6 +54,7 @@ const appliedDaysOverride = parseAppliedDaysOverride(appliedDaysRaw);
 
 // --- Cadence config ---
 export const DEFAULT_CADENCE = {
+  scope: 'all',
   applied_first: 7,
   applied_subsequent: 7,
   applied_max_followups: 2,
@@ -86,6 +87,7 @@ export function loadProfileCadence(profilePath = PROFILE_FILE) {
   }
   const source = raw.followup_cadence || {};
   const cadence = {};
+  if (['off', 'interviews', 'all'].includes(source.scope)) cadence.scope = source.scope;
   for (const [profileKey, cadenceKey] of Object.entries(PROFILE_CADENCE_KEYS)) {
     const parsed = positiveInteger(source[profileKey]);
     if (parsed !== null) cadence[cadenceKey] = parsed;
@@ -827,7 +829,7 @@ export function computeNextFollowupDate(status, appDate, lastFollowupDate, follo
 // requires followupCount >= applied_max_followups) simply never triggers —
 // no error, no guessing, matching the same "absent optional file = pass
 // through" convention used elsewhere in this project.
-export function analyzeFromContent(trackerContent, followupsContent = '') {
+export function analyzeFromContent(trackerContent, followupsContent = '', { scope = CADENCE.scope } = {}) {
   const apps = parseTrackerContent(trackerContent);
   if (apps.length === 0) {
     // cadenceDefaults rides along on the error. It is a constant, so it is just
@@ -835,7 +837,7 @@ export function analyzeFromContent(trackerContent, followupsContent = '') {
     // state where a consumer cannot do without it: on a first run the web
     // cadence form has no profile overrides to fall back on either, so
     // withholding it renders six empty fields with nothing to type back in.
-    return { error: 'No applications found in tracker.', cadenceDefaults: DEFAULT_CADENCE };
+    return { error: 'No applications found in tracker.', cadenceDefaults: DEFAULT_CADENCE, cadenceConfig: CADENCE };
   }
 
   const followups = parseFollowups(followupsContent);
@@ -855,6 +857,7 @@ export function analyzeFromContent(trackerContent, followupsContent = '') {
   for (const app of apps) {
     const normalized = normalizeStatus(app.status);
     if (!ACTIONABLE_STATUSES.includes(normalized)) continue;
+    if (scope === 'off' || (scope === 'interviews' && normalized !== 'interview')) continue;
 
     // Prefer the "Applied YYYY-MM-DD" date from notes; fall back to the column.
     // appDateSource travels with the entry so a consumer can tell a measured
@@ -992,7 +995,12 @@ function printSummary(result) {
   console.log(`${'='.repeat(70)}\n`);
 
   if (entries.length === 0) {
-    console.log('  No active applications to track. Apply to some roles first.\n');
+    const message = result.cadenceConfig.scope === 'off'
+      ? 'Follow-up reminders are turned off.'
+      : result.cadenceConfig.scope === 'interviews'
+        ? 'No interviews currently need a follow-up.'
+        : 'No active applications to track. Apply to some roles first.';
+    console.log(`  ${message}\n`);
     return;
   }
 

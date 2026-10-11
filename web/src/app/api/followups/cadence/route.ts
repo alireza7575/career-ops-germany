@@ -5,7 +5,7 @@ import * as yaml from "js-yaml";
 import { careerOpsRoot, rootScript } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
 import { isMapping } from "@/lib/portals-config.mjs";
-import { PROFILE_CADENCE_KEYS, type ProfileCadenceKey } from "@/lib/followups";
+import { PROFILE_CADENCE_KEYS, type ProfileCadenceKey, type FollowupScope } from "@/lib/followups";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,7 +36,7 @@ function isObj(v: unknown): v is Record<string, unknown> {
  * hardcoded fallback table: a fallback copy is the same copy in disguise, and
  * that is exactly how states.ts's FALLBACK drifted (#2282).
  */
-async function readCoreDefaults(): Promise<Partial<Record<ProfileCadenceKey, number>> | null> {
+async function readCoreDefaults(): Promise<({ scope: FollowupScope } & Partial<Record<ProfileCadenceKey, number>>) | null> {
   const script = rootScript("followup-cadence");
   if (!fs.existsSync(script)) return null;
   const stdout = await new Promise<string>((resolve) => {
@@ -48,6 +48,7 @@ async function readCoreDefaults(): Promise<Partial<Record<ProfileCadenceKey, num
     const parsed = JSON.parse(stdout.slice(start)) as { cadenceDefaults?: unknown };
     if (!isObj(parsed.cadenceDefaults)) return null;
     const core = parsed.cadenceDefaults;
+    if (!isScope(core.scope)) return null;
     // ALL-OR-NOTHING, and no coercion. Number.parseInt would accept "3.5" as 3
     // and "7days" as 7, and a per-key filter would report defaultsAvailable:
     // true off a single valid key — either way the form would show a baseline
@@ -61,15 +62,19 @@ async function readCoreDefaults(): Promise<Partial<Record<ProfileCadenceKey, num
       if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) return null;
       out[key] = raw;
     }
-    return out;
+    return { ...out, scope: core.scope };
   } catch {
     return null;
   }
 }
 
+function isScope(value: unknown): value is FollowupScope {
+  return value === "off" || value === "interviews" || value === "all";
+}
+
 export async function GET() {
   const file = path.join(careerOpsRoot(), "config", "profile.yml");
-  const overrides: Partial<Record<ProfileCadenceKey, number>> = {};
+  const overrides: Partial<Record<ProfileCadenceKey, number>> & { scope?: FollowupScope } = {};
   if (fs.existsSync(file)) {
     let profile: Record<string, unknown> = {};
     try {
@@ -79,6 +84,7 @@ export async function GET() {
       /* unreadable/malformed → show defaults (read is best-effort) */
     }
     const source = isObj(profile.followup_cadence) ? profile.followup_cadence : {};
+    if (isScope(source.scope)) overrides.scope = source.scope;
     for (const key of PROFILE_CADENCE_KEYS) {
       const n = Number.parseInt(String(source[key]), 10);
       if (Number.isFinite(n) && n >= 0) overrides[key] = n;
@@ -99,11 +105,16 @@ export async function POST(req: Request) {
     return Response.json({ error: "bad json" }, { status: 400 });
   }
 
-  const cadence: Record<string, number> = {};
+  if (!isObj(body)) return Response.json({ error: "expected settings object" }, { status: 400 });
+  const cadence: Record<string, number | FollowupScope> = {};
+  if (body.scope !== undefined) {
+    if (!isScope(body.scope)) return Response.json({ error: "scope must be off, interviews, or all" }, { status: 400 });
+    cadence.scope = body.scope;
+  }
   for (const key of PROFILE_CADENCE_KEYS) {
     if (body[key] == null) continue;
-    const n = Number.parseInt(String(body[key]), 10);
-    if (!Number.isInteger(n) || n < 0) {
+    const n = body[key];
+    if (typeof n !== "number" || !Number.isSafeInteger(n) || n < 0) {
       return Response.json({ error: `${key} must be a non-negative integer` }, { status: 400 });
     }
     cadence[key] = n;
@@ -114,13 +125,8 @@ export async function POST(req: Request) {
   const file = path.join(root, "config", "profile.yml");
   let base: Record<string, unknown> = {};
   if (!fs.existsSync(file)) {
-    // First create: seed from the example so we never leave a cadence-only profile.
-    try {
-      const seeded = yaml.load(fs.readFileSync(path.join(root, "config", "profile.example.yml"), "utf8"));
-      base = isObj(seeded) ? seeded : {};
-    } catch {
-      base = {};
-    }
+    // A cadence setting cannot make an unconfigured profile into a real one.
+    return Response.json({ error: "Create your profile before setting follow-up cadence." }, { status: 409 });
   } else {
     // DATA-LOSS GUARD (mirrors /api/profile): a profile that EXISTS but cannot be
     // read/parsed must never be overwritten with a cadence-only file.

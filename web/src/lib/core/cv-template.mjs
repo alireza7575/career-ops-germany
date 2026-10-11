@@ -38,26 +38,27 @@ import { BASE_CV_TEMPLATE } from "../run-prompts.mjs";
  * not exist; the catch is for a checkout too old to export resolveTemplate, and
  * for a template whose placeholders fail validation.
  *
- * @param {string} root Absolute path to the career-ops checkout (careerOpsRoot()).
+ * @param {string} root Absolute path to the user data root (careerOpsRoot()).
+ * @param {string} codeRoot Absolute path to the engine checkout.
  * @returns {Promise<string>} Repo-relative template path, forward-slashed.
  */
-export async function resolveCvTemplate(root) {
-  const file = path.join(root, "cv-templates.mjs");
+export async function resolveCvTemplate(root, codeRoot = root) {
+  const file = path.join(codeRoot, "cv-templates.mjs");
   try {
     const mod = await import(/* webpackIgnore: true */ pathToFileURL(file).href);
     if (typeof mod?.resolveTemplate !== "function") return BASE_CV_TEMPLATE;
     const profile = process.env.CAREER_OPS_PROFILE?.trim();
     const abs = mod.resolveTemplate("cv", null, {
       fallback: true,
-      // undefined keeps cv-templates.mjs's own default, rather than restating it
-      // here where it would drift.
-      profilePath: profile ? path.resolve(root, profile) : undefined,
+      // Resolve the user's profile explicitly; the core's module default was
+      // captured at import time and can point at a different data root.
+      profilePath: profile ? path.resolve(root, profile) : path.join(root, "config", "profile.yml"),
     });
     if (typeof abs !== "string" || !abs) return BASE_CV_TEMPLATE;
     // The prompt names a repo-relative path, and always with forward slashes:
     // path.relative gives backslashes on Windows, which is not how any of the
     // agent-facing paths in this prompt are written.
-    const rel = path.relative(root, abs).split(path.sep).join("/");
+    const rel = path.relative(codeRoot, abs).split(path.sep).join("/");
     return rel || BASE_CV_TEMPLATE;
   } catch {
     return BASE_CV_TEMPLATE;

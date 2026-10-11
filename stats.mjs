@@ -140,7 +140,7 @@ export function trackerStatusByNum(content) {
  * @param {string|null} followupsContent - Raw follow-ups.md text, or null when absent.
  */
 export function computeColdAppNums(trackerContent, followupsContent) {
-  const result = analyzeFromContent(trackerContent, followupsContent || '');
+  const result = analyzeFromContent(trackerContent, followupsContent || '', { scope: 'all' });
   if (result.error) return new Set();
   return new Set(result.entries.filter((e) => e.urgency === 'cold').map((e) => e.num));
 }

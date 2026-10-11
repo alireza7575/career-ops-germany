@@ -1,6 +1,5 @@
-import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { careerOpsRoot } from "@/lib/career-ops";
+import { careerOpsRoot, rootScript } from "@/lib/career-ops";
 
 /**
  * ACL for the core's `resolvePdfIndexPath`/`resolveTrackerPath` (tracker-utils.mjs)
@@ -36,7 +35,7 @@ let warned = false;
  *  callers must treat null as "can't resolve" rather than guessing a path. */
 export async function resolvePdfIndexPath(): Promise<string | null> {
   const root = careerOpsRoot();
-  const file = path.join(root, "tracker-utils.mjs");
+  const file = rootScript("tracker-utils");
   const hit = modCache.get(file);
   if (hit) return hit.resolvePdfIndexPath(hit.resolveTrackerPath(root));
   try {

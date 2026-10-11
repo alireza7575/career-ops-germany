@@ -9,11 +9,11 @@ import { cliSubstitutionNotice, cliUnavailableError, resolveCliOrFallback } from
 import { localISODate } from "@/lib/followups";
 import { accumulateTokens, hasNewCompletedReport, isFatalGenericStderr, killMsForKind, timeoutMessage } from "@/lib/run-cli-support.mjs";
 import { spawnHeadlessCli } from "@/lib/spawn-cli.mjs";
-import { careerOpsRoot, readMemory, findReportFile, readInbox, readScanDates, readLanguageConfig } from "@/lib/career-ops";
+import { careerOpsRoot, careerOpsCodeRoot, readMemory, findReportFile, readInbox, readScanDates, readLanguageConfig } from "@/lib/career-ops";
 import { resolvePdfPaths, type PdfPaths } from "@/lib/pdf-paths.mjs";
 import { renderAndMarkPdf, writeCvHtml, pdfRunOutcome } from "@/lib/pdf-render.mjs";
 import { createCvEnvelopeFilter, type CvEnvelope } from "@/lib/cv-envelope.mjs";
-import { buildPrompt, isShellSafeCompanyName } from "@/lib/run-prompts.mjs";
+import { buildPrompt, isShellSafeCompanyName, isShellSafeRootPath } from "@/lib/run-prompts.mjs";
 import { capabilitiesFor } from "@/lib/worker-capabilities.mjs";
 import { fencingReport, isCliAllowedForCapabilities } from "@/lib/cli-fencing.mjs";
 import { claudeCliArgs } from "@/lib/claude-invocation.mjs";
@@ -44,6 +44,9 @@ export async function POST(req: Request) {
     });
   }
   const { spec, binPath } = resolved;
+  if (!isShellSafeRootPath(careerOpsCodeRoot())) {
+    return Response.json({ error: "The engine path contains characters unsafe for worker commands." }, { status: 400 });
+  }
   // The CLI actually running: fencing, capabilities and argv below are keyed on it.
   const cliId = spec.id;
   const substitution = cliSubstitutionNotice(resolved);
@@ -66,12 +69,12 @@ export async function POST(req: Request) {
   // CAREER_OPS_ROOT is runtime user data, not a build input. Tracing this
   // dynamic path would copy the whole web project into every server bundle.
   const requiredPath = required
-    ? path.join(/* turbopackIgnore: true */ careerOpsRoot(), required)
+    ? path.join(/* turbopackIgnore: true */ careerOpsCodeRoot(), required)
     : "";
   if (required && !fs.existsSync(/* turbopackIgnore: true */ requiredPath)) {
     return new Response(
       JSON.stringify({
-        error: `This needs a complete career-ops checkout (${required}). CAREER_OPS_ROOT has data only — point it at a full checkout.`,
+        error: `This needs the career-ops engine file ${required} in the code checkout.`,
       }),
       { status: 400, headers: { "Content-Type": "application/json" } },
     );
@@ -132,8 +135,8 @@ export async function POST(req: Request) {
   // (#4034). Only pdf fills a template, so nothing else pays for the lookup.
   // The root is passed, not re-derived: a relative CAREER_OPS_PROFILE resolves
   // against it, and `process.cwd()` here is `<core>/web` (see cv-template.mjs).
-  const cvTemplate = kind === "pdf" ? await resolveCvTemplate(careerOpsRoot()) : undefined;
-  const prompt = buildPrompt({ kind, input, memory: readMemory(), today, postedAt, lang, cvTemplate });
+  const cvTemplate = kind === "pdf" ? await resolveCvTemplate(careerOpsRoot(), careerOpsCodeRoot()) : undefined;
+  const prompt = buildPrompt({ kind, input, memory: readMemory(), today, postedAt, lang, cvTemplate, dataRoot: careerOpsRoot(), codeRoot: careerOpsCodeRoot() });
 
   const isClaude = cliId === "claude";
   // Which tools each kind gets, and the whole claude argv, live in
@@ -183,7 +186,7 @@ export async function POST(req: Request) {
     child = spawnHeadlessCli(
       binPath,
       args,
-      { cwd: careerOpsRoot(), env: process.env },
+      { cwd: careerOpsRoot(), env: { ...process.env, CAREER_OPS_ROOT: careerOpsRoot() } },
       { cliId, capabilities },
     );
   } catch (e) {
@@ -433,6 +436,7 @@ export async function POST(req: Request) {
             spawnFn: spawn,
             execPath: process.execPath,
             root: careerOpsRoot(),
+            codeRoot: careerOpsCodeRoot(),
             pdfPaths: paths,
             format,
             reportNum: input,

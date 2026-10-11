@@ -124,7 +124,7 @@ export function FilterBuilder({
 
       <div>
         <Label hint={filters.positive.length === 0 ? "empty = every fresh posting" : undefined}>Roles to find</Label>
-        <KeywordField values={filters.positive} tone="inc" placeholder="AI platform, ML infrastructure, staff engineer…" onChange={(v) => set({ positive: v })} />
+        <KeywordField values={filters.positive} tone="inc" placeholder="software engineer, robotics, product engineer…" onChange={(v) => set({ positive: v })} />
         {seededFrom.length > 0 && filters.positive.length > 0 && (
           <p className="mt-1 text-[11px] text-faint">Seeded from your {seededFrom.join(" + ")} — edit freely.</p>
         )}
@@ -144,7 +144,7 @@ export function FilterBuilder({
         <KeywordField
           values={filters.allow}
           tone="inc"
-          placeholder="Toronto, New York, Remote…"
+          placeholder="Munich, Berlin, Germany, Remote…"
           ariaLabel="City or location"
           onChange={(v) => set({ allow: v })}
         />
@@ -213,7 +213,7 @@ export function FilterBuilder({
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <Label hint="rescues a multi-location posting">Always include</Label>
-              <KeywordField values={filters.alwaysAllow} tone="inc" placeholder="Toronto…" onChange={(v) => set({ alwaysAllow: v })} />
+              <KeywordField values={filters.alwaysAllow} tone="inc" placeholder="Munich…" onChange={(v) => set({ alwaysAllow: v })} />
             </div>
             <div>
               <Label hint="unless Always include also matches">Exclude locations</Label>
@@ -222,7 +222,7 @@ export function FilterBuilder({
           </div>
           <div>
             <Label hint="hard reject — overrides Always include">Never include</Label>
-            <KeywordField values={filters.blockHard} tone="exc" placeholder="USA, Brazil…" onChange={(v) => set({ blockHard: v })} />
+            <KeywordField values={filters.blockHard} tone="exc" placeholder="United States, India…" onChange={(v) => set({ blockHard: v })} />
           </div>
           <div>
             <Label hint={`${filters.limitPerAts} companies / source`}>Scan depth</Label>

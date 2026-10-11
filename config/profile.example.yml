@@ -135,6 +135,7 @@ language:
 # Optional follow-up cadence preferences for `node followup-cadence.mjs`.
 # CLI flags still win for one-off runs (for example `--applied-days 10`).
 # followup_cadence:
+#   scope: all  # off | interviews | all; missing means all
 #   applied_first_days: 7
 #   applied_subsequent_days: 7
 #   applied_max_followups: 2

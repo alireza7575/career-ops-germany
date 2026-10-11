@@ -10,13 +10,9 @@
 // but pipeline.ts always passes an explicit `date` argument, which overrides
 // that default — so this call site needed its own fix and its own guard.
 //
-// pipeline.ts is TypeScript, imports via the `@/` path alias (which plain
-// `node --test` cannot resolve without the Next.js build), and computes the
-// date inside a template-literal string executed in a SEPARATE spawned
-// process — so, same as tests/lib/core-writer-await.test.mjs, it cannot be
-// imported and exercised here. This reads the source and asserts the shape.
-// The fix itself was verified by execution in a frozen-clock scratch child
-// (see the PR description) before this guard was written.
+// The date is computed inside a template-literal string executed in a separate
+// child process, so this checks the snippet's local-day wiring. The split-root
+// integration test exercises the actual writer against scratch data.
 //
 // Run (from web/, as `npm test` does):  node --test tests/lib/pipeline-local-today.test.mjs
 // From the repo root:                   node --test web/tests/lib/pipeline-local-today.test.mjs
@@ -85,11 +81,10 @@ test("localToday is imported into the spawned child from lib/local-today.mjs", (
   );
 });
 
-test("localTodayUrl is built the same way scanUrl is: an absolute file:// URL under careerOpsRoot()", () => {
+test("localTodayUrl resolves the engine module under careerOpsCodeRoot()", () => {
   assert.match(
     src,
-    /const localTodayUrl = pathToFileURL\(path\.join\(careerOpsRoot\(\),\s*["']lib["'],\s*["']local-today\.mjs["']\)\)\.href;/,
-    `${SRC}: localTodayUrl must resolve lib/local-today.mjs under careerOpsRoot(), so the import ` +
-      `works regardless of the checkout the web dashboard is pointed at.`,
+    /const localTodayUrl = pathToFileURL\(path\.join\(careerOpsCodeRoot\(\),\s*["']lib["'],\s*["']local-today\.mjs["']\)\)\.href;/,
+    `${SRC}: localTodayUrl must resolve the engine's lib/local-today.mjs, even when CAREER_OPS_ROOT points at data only.`,
   );
 });

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { cliSubstitutionNotice, cliUnavailableError, resolveCliOrFallback } from "@/lib/clis";
-import { careerOpsRoot, readMemory } from "@/lib/career-ops";
+import { careerOpsRoot, careerOpsCodeRoot, readMemory, readLanguageConfig } from "@/lib/career-ops";
 import { assembleDedupContext } from "@/lib/core/discover";
 import { CAPS } from "@/lib/worker-capabilities.mjs";
 import { scopeFrom } from "@/lib/claude-invocation.mjs";
@@ -66,7 +66,7 @@ export async function POST(req: Request) {
   // homegrown prompt. Missing (older core) → graceful 400 so the Scan tab stays usable.
   let mode: string;
   try {
-    mode = fs.readFileSync(path.join(careerOpsRoot(), "modes", "discover.md"), "utf8");
+    mode = fs.readFileSync(path.join(careerOpsCodeRoot(), "modes", "discover.md"), "utf8");
   } catch {
     return Response.json({ code: "MODE_MISSING", error: "AI search needs a newer career-ops — update to enable it." }, { status: 400 });
   }
@@ -75,7 +75,10 @@ export async function POST(req: Request) {
   const memory = readMemory();
   const memoryLine = memory.trim() ? `\n\nWHAT YOU KNOW ABOUT THE USER (persistent memory):\n${memory.trim()}` : "";
   const knownBlock = lines.length ? `\n\n--- ALREADY KNOWN (dedup — do NOT propose these) ---\n${lines.join("\n")}` : "";
-  const prompt = `${mode}${OUTPUT_CONTRACT}${memoryLine}${knownBlock}\n\n--- USER INTENT ---\n${query}\n`;
+  const germanMarket = readLanguageConfig().modesDir === "modes/de"
+    ? "\n\nMARKET CONTEXT: Search for roles hiring in Germany unless the user's intent explicitly requests another market. A generic Remote label does not establish Germany eligibility; leave that unverified until the posting confirms it.\n"
+    : "";
+  const prompt = `${mode}${OUTPUT_CONTRACT}${memoryLine}${knownBlock}${germanMarket}\n\n--- USER INTENT ---\n${query}\n`;
 
   const isClaude = cliId === "claude";
   const isCodex = cliId === "codex";

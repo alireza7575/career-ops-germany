@@ -27,7 +27,7 @@ const loader = `
 register(`data:text/javascript,${encodeURIComponent(loader)}`, pathToFileURL(webSrc));
 
 const { POST: updateProfile } = await import("../../src/app/api/profile/route.ts");
-const { POST: updateCadence } = await import("../../src/app/api/followups/cadence/route.ts");
+const { GET: getCadence, POST: updateCadence } = await import("../../src/app/api/followups/cadence/route.ts");
 
 const routes = [
   { name: "profile", post: updateProfile, patch: { name: "Updated Fixture Candidate" } },
@@ -100,17 +100,62 @@ for (const route of routes) {
     });
   });
 
-  test(`${route.name} still creates a missing profile from the template`, async () => {
+  test(`${route.name} handles a missing profile without copying sample author facts`, async () => {
     await withFixture(undefined, async ({ config, file }) => {
       assert.equal(existsSync(file), false);
       const response = await route.post(request(route));
-      assert.equal(response.status, 200);
-      assert.equal((await response.json()).ok, true);
-      const expected = yaml.load(template);
-      if (route.name === "profile") expected.candidate.full_name = route.patch.name;
-      else expected.followup_cadence = route.patch;
-      assert.deepEqual(yaml.load(readFileSync(file, "utf8")), expected);
-      assert.deepEqual(readdirSync(config).sort(), ["profile.example.yml", "profile.yml"]);
+      if (route.name === "profile") {
+        assert.equal(response.status, 200);
+        assert.equal((await response.json()).ok, true);
+        assert.deepEqual(yaml.load(readFileSync(file, "utf8")), {
+          candidate: { full_name: route.patch.name },
+          language: { output: "en", modes_dir: "modes/de" },
+        });
+        assert.deepEqual(readdirSync(config).sort(), ["profile.example.yml", "profile.yml"]);
+      } else {
+        assert.equal(response.status, 409);
+        assert.equal(existsSync(file), false);
+      }
     });
   });
 }
+
+test("cadence scope-only save preserves numeric settings and other profile fields", async () => {
+  const source = "candidate:\n  full_name: Fixture Candidate\nfollowup_cadence:\n  applied_first_days: 11\n";
+  await withFixture(source, async ({ file }) => {
+    const response = await updateCadence(new Request("http://fixture.invalid/api/followups/cadence", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scope: "interviews" }),
+    }));
+    assert.equal(response.status, 200);
+    assert.deepEqual(yaml.load(readFileSync(file, "utf8")), {
+      candidate: { full_name: "Fixture Candidate" },
+      followup_cadence: { applied_first_days: 11, scope: "interviews" },
+    });
+    const current = await getCadence();
+    assert.equal((await current.json()).effective.scope, "interviews");
+  });
+});
+
+test("cadence rejects invalid scope and fractional numbers without writing", async () => {
+  const source = "candidate:\n  full_name: Fixture Candidate\n";
+  await withFixture(source, async ({ config, file }) => {
+    const before = readdirSync(config).sort();
+    for (const patch of [{ scope: "everyone" }, { applied_first_days: 3.5 }]) {
+      const response = await updateCadence(new Request("http://fixture.invalid/api/followups/cadence", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
+      }));
+      assert.equal(response.status, 400);
+      assert.equal(readFileSync(file, "utf8"), source);
+      assert.deepEqual(readdirSync(config).sort(), before);
+    }
+  });
+});
+
+test("cadence GET returns canonical all scope when profile has no override", async () => {
+  await withFixture("candidate:\n  full_name: Fixture Candidate\n", async () => {
+    const response = await getCadence();
+    const payload = await response.json();
+    assert.equal(payload.defaults.scope, "all");
+    assert.equal(payload.effective.scope, "all");
+  });
+});

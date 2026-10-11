@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
-import { PROFILE_CADENCE_KEYS, type ProfileCadenceKey } from "@/lib/followups";
+import { PROFILE_CADENCE_KEYS, type ProfileCadenceKey, type FollowupScope } from "@/lib/followups";
 import { cn } from "@/lib/cn";
 
 // Follow-up cadence knobs → config/profile.yml (followup_cadence). Server-
@@ -20,6 +20,7 @@ const FIELDS: { key: ProfileCadenceKey; label: string; hint: string }[] = [
 
 export function CadenceSettings() {
   const [values, setValues] = useState<Record<ProfileCadenceKey, string> | null>(null);
+  const [scope, setScope] = useState<FollowupScope>("all");
   const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -41,6 +42,7 @@ export function CadenceSettings() {
         // in. A key the core didn't supply renders empty rather than as an
         // invented number.
         const eff = (d?.effective ?? {}) as Partial<Record<ProfileCadenceKey, number>>;
+        setScope(d?.effective?.scope ?? "all");
         setValues(Object.fromEntries(
           PROFILE_CADENCE_KEYS.map((k) => [k, eff[k] === undefined ? "" : String(eff[k])]),
         ) as Record<ProfileCadenceKey, string>);
@@ -51,11 +53,13 @@ export function CadenceSettings() {
 
   const save = async () => {
     if (!values) return;
-    const payload: Partial<Record<ProfileCadenceKey, number>> = {};
+    const payload: Partial<Record<ProfileCadenceKey, number>> & { scope: FollowupScope } = { scope };
     for (const k of PROFILE_CADENCE_KEYS) {
+      if (scope === "off" || (scope === "interviews" && k !== "interview_thankyou_days")) continue;
       // Number(), not parseInt(): "3.5" and "7abc" must be rejected, not truncated.
       const raw = values[k].trim();
-      const n = raw === "" ? Number.NaN : Number(raw);
+      if (raw === "") continue;
+      const n = Number(raw);
       if (!Number.isInteger(n) || n < 0) {
         setError(`"${FIELDS.find((f) => f.key === k)?.label}" must be a whole number ≥ 0.`);
         return;
@@ -113,8 +117,20 @@ export function CadenceSettings() {
           </div>
         ) : (
           <>
+            <label className="mt-3 block text-sm font-medium text-foreground" htmlFor="followup-scope">Follow-up scope</label>
+            <select
+              id="followup-scope"
+              value={scope}
+              onChange={(e) => setScope(e.target.value as FollowupScope)}
+              className="mt-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-foreground focus-visible:ring-2 focus-visible:ring-brand/40"
+            >
+              <option value="off">Off</option>
+              <option value="interviews">Interviews only</option>
+              <option value="all">All active applications</option>
+            </select>
+            {scope === "off" && <p className="mt-2 text-xs text-faint">Follow-up reminders are turned off.</p>}
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              {FIELDS.map((f) => (
+              {FIELDS.filter((f) => scope === "all" || (scope === "interviews" && f.key === "interview_thankyou_days")).map((f) => (
                 <label key={f.key} className="block">
                   <span className="block text-sm font-medium text-foreground">{f.label}</span>
                   <span className="mt-0.5 block text-xs text-faint">{f.hint}</span>
