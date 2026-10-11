@@ -492,26 +492,6 @@ const scripts = [
   { name: 'invite-match.mjs --self-test', expectExit: 0 },
   { name: 'tracker-sync-check.mjs --self-test', expectExit: 0 },
   { name: 'updater-migration-tests.mjs', expectExit: 0 },
-  // An outlier, measured on Windows CI the way tracker-writer-lock-tests.mjs
-  // once was (#2906). It spawns five node subprocesses
-  // (merge-tracker, verify-pipeline) against throwaway mkdtempSync trees, and
-  // that cost is the behaviour under test rather than slack to be trimmed.
-  //
-  // Measured on windows-latest across six green runs: 10.9s, 11.7s, 11.9s,
-  // 12.0s, 12.4s, 13.8s, which makes it the SLOWEST script in this section
-  // there, a hair above tracker-writer-lock-tests.mjs at 11.6s on the same run.
-  // A seventh run ran past the 30s default and was killed mid-suite
-  // (`exit null, signal SIGTERM`) while ubuntu, macos and every other check on
-  // that commit passed (#4010, same shape as #2906). Locally on an idle box it
-  // is 4.2s, so the spread is Windows process creation under runner load.
-  //
-  // SLOW_SCRIPT_WARN_FRACTION could not have given notice: at a typical 12s of
-  // 30s this never reaches the 75% warning, so it goes from silent to killed
-  // with nothing in between. The ceiling is the only signal it has.
-  //
-  // The writer-lock suite has since been made fast and moved into tests/ under
-  // the shared cap (#4759); #4758 is the same work for this one.
-  { name: 'tracker-columns-tests.mjs', expectExit: 0, timeoutMs: 180_000 },
   { name: 'validate-portals.mjs --file templates/portals.example.yml', expectExit: 0 },
   { name: 'validate-system-paths-coverage.mjs --self-test', expectExit: 0 },
   // The bare coverage run is NOT here on purpose: this section executes each
@@ -4246,6 +4226,16 @@ if (
   pass('AGENTS.md documents offer-prep and CLAUDE.md imports it');
 } else {
   fail('AGENTS.md missing offer-prep mode row or CLAUDE.md is not importing AGENTS.md');
+}
+
+// The trigger table is how a free-form request reaches a mode; a mode the
+// router exposes but the table omits is reachable only by its exact name (#4901).
+for (const mode of ['discover', 'text']) {
+  if (new RegExp(`^\\|[^\\n]*\\| \`${mode}\` \\|$`, 'm').test(agentsMdDoc)) {
+    pass(`AGENTS.md trigger table has a row for ${mode}`);
+  } else {
+    fail(`AGENTS.md trigger table has no row for ${mode} (#4901)`);
+  }
 }
 
 const dataContractDoc = readFile('DATA_CONTRACT.md');
@@ -8165,6 +8155,8 @@ try {
 
   const historyRow = formatScanHistoryRow(hostileOffer, '2026-06-18');
   const history = parseScanHistoryLine(historyRow);
+  // The stored cells carry the formula escaping; parseScanHistoryLine undoes it.
+  const stored = Object.fromEntries(SCAN_HISTORY_COLUMNS.map((name, i) => [name, historyRow.split('\t')[i]]));
   if (
     historyRow.split('\t').length === SCAN_HISTORY_COLUMNS.length && // every declared column, empty ones included
     !historyRow.includes('\n') && !historyRow.includes('\r') &&
@@ -8172,14 +8164,18 @@ try {
     history.trust_score === '' && history.trust_flags === '' && // no trust signal
     history.url === 'https://jobs.example.com/123|evil' &&
     history.title.includes('- [ ] https://evil.example/job') &&
-    history.company === "'=ACME\\Corp | R&D" &&
-    history.location === "'@Remote EU" &&
-    history.requisition_id === "'=R1 DROP x" &&
-    history.language === "'@en -GB"
+    stored.company === "'=ACME\\Corp | R&D" &&
+    stored.location === "'@Remote EU" &&
+    stored.requisition_id === "'=R1 DROP x" &&
+    stored.language === "'@en -GB" &&
+    history.company === '=ACME\\Corp | R&D' &&
+    history.location === '@Remote EU' &&
+    history.requisition_id === '=R1 DROP x' &&
+    history.language === '@en -GB'
   ) {
-    pass('scan-history writer preserves row shape and neutralizes spreadsheet formulas');
+    pass('scan-history writer preserves row shape and neutralizes spreadsheet formulas; the reader gets the values back');
   } else {
-    fail(`scan-history metadata sanitizer produced unsafe TSV row: ${JSON.stringify(history)}`);
+    fail(`scan-history metadata sanitizer produced unsafe TSV row: ${JSON.stringify({ stored, history })}`);
   }
 
   // ── postedAt persistence ──
@@ -16337,6 +16333,70 @@ try {
     pass('tracker.mjs writes the canonical 9-col applications.md header');
   } else {
     fail('tracker.mjs no longer writes the canonical 9-col header — BREAKING for the web reader; coordinate web/ in lockstep');
+  }
+
+  // 55.1b tracker URL CELL form (#3516). The header label stays `URL`; what
+  // changed is the cell, which merge-tracker now writes as `[label](href)`.
+  //
+  // This belongs in the freeze section for the reason the section exists: the
+  // cell is read by three surfaces outside merge-tracker — the shared Node row
+  // parser, the Go dashboard (tier 0 of its JobURL chain since #3452), and,
+  // were the web ever to start reading it, the web. A reader that has not
+  // learned the link form does not fail loudly; `normalizeUrl('[l](u)')` is '',
+  // and '' means "no URL", so the row silently loses its exact-match dedup
+  // tier. Freezing the writer AND both readers here makes any future change to
+  // the form edit this assertion.
+  const mergeSrc = readFileSync(join(ROOT, 'merge-tracker.mjs'), 'utf-8');
+  const parseSrc = readFileSync(join(ROOT, 'tracker-parse.mjs'), 'utf-8');
+  const goCareerSrc = readFileSync(join(ROOT, 'dashboard', 'internal', 'data', 'career.go'), 'utf-8');
+  const historySeedsSrc = readFileSync(join(ROOT, 'history-ats-seeds.mjs'), 'utf-8');
+  const urlCellReaders = [
+    ["tracker-parse.mjs exports the shared extractor", /export function extractCellUrl\(/.test(parseSrc)],
+    ["merge-tracker.mjs writes the cell through formatUrlCell", /put\('url', formatUrlCell\(/.test(mergeSrc)],
+    ["merge-tracker.mjs reads the href before keying", /url: COLMAP\.url != null \? extractCellUrl\(/.test(mergeSrc)],
+    ["tracker-parse.mjs returns the href on parsed rows", /url: extractCellUrl\(at\('url'\)\)/.test(parseSrc)],
+    ["the Go dashboard extracts the href", /func extractCellURL\(/.test(goCareerSrc) && /JobURL:\s+extractCellURL\(at\("url"\)\)/.test(goCareerSrc)],
+    // history-ats-seeds reads the cell directly rather than through
+    // parseTrackerRow, so it is listed on its own.
+    ["history-ats-seeds.mjs extracts the href", /extractCellUrl\(cells\[columns\.url\]\)/.test(historySeedsSrc)],
+  ];
+  // The greps above prove the extraction is WRITTEN, not that it WINS. A later
+  // `row.url = at('url')` in parseTrackerRow overwrote the href with the raw
+  // cell after a merge from main, and every grep still passed. So also assert
+  // the behaviour: the shared parser hands back the href for a linked cell.
+  // scan.mjs's same-title requisition dedup (#4267) reads row.url from here.
+  {
+    const { resolveColumns, parseTrackerRow } = await import(pathToFileURL(join(ROOT, 'tracker-parse.mjs')).href);
+    const href = 'https://jobs.ashbyhq.com/acme/8a65908d';
+    const lines = [
+      '| # | Date | Company | Role | Score | Status | PDF | Report | Notes | URL |',
+      '|---|------|---------|------|-------|--------|-----|--------|-------|-----|',
+      `| 1 | 2026-01-01 | Acme | Engineer | 4.0/5 | Applied | ❌ | — | n | [ashby](${href}) |`,
+    ];
+    const got = parseTrackerRow(lines[2], resolveColumns(lines))?.url;
+    urlCellReaders.push([`parseTrackerRow returns the href for a linked cell (got ${JSON.stringify(got)})`, got === href]);
+  }
+  const brokenReaders = urlCellReaders.filter(([, ok]) => !ok).map(([label]) => label);
+  if (brokenReaders.length === 0) {
+    pass('tracker URL cell: written as a markdown link, and every reader extracts the href (#3516)');
+  } else {
+    fail(`tracker URL cell contract broken — ${brokenReaders.join('; ')}. A reader that misses the link form reads the row as having NO url and silently drops it to fuzzy dedup (#3516)`);
+  }
+
+  // 55.1c the boundary that kept the web out of this change: the TSV's `url`
+  // field stays a RAW url, and the web (which WRITES those TSVs) does not read
+  // the tracker's url cell — its field map has no `url` entry. If either half
+  // stops holding, the link form becomes a lockstep core+web change.
+  if (existsSync(join(ROOT, 'web', 'src', 'lib', 'tracker-table.mjs'))) {
+    const webTableSrc = readFileSync(join(ROOT, 'web', 'src', 'lib', 'tracker-table.mjs'), 'utf-8');
+    const webFieldBlock = webTableSrc.match(/const WEB_FIELD = \{[\s\S]*?\};/)?.[0] ?? '';
+    if (webFieldBlock && !/\burl:/.test(webFieldBlock)) {
+      pass('web tracker reader still ignores the URL column — the #3516 link form stays a core-only change');
+    } else {
+      fail('web tracker reader now maps the URL column: the markdown-link cell form (#3516) must be taught to it in lockstep, or the cell must go back to a raw URL');
+    }
+  } else {
+    console.log('   ⏭️  web/ not present (core-only install) — skipping the web URL-column boundary check');
   }
 
   // 55.2 scan-history.tsv header prefix (lib/scan-history-columns.mjs, the

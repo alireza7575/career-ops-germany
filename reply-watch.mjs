@@ -237,9 +237,16 @@ async function main() {
     const classification = classifyReply(cand);
 
     let headerStr = '';
-    if (match.application_num !== null) {
-      const app = apps.find(a => a.num === match.application_num);
-      headerStr = `${app.company} — ${app.role}`;
+    const matchedApplicationNums = Array.isArray(match.application_nums)
+      ? match.application_nums
+      : (match.application_num !== null ? [match.application_num] : []);
+
+    if (matchedApplicationNums.length > 1) {
+      headerStr = `${match.company_hint} — company-wide rejection (${matchedApplicationNums.length} applications)`;
+    } else if (matchedApplicationNums.length === 1) {
+      const applicationNum = matchedApplicationNums[0];
+      const app = apps.find(a => a.num === applicationNum);
+      headerStr = app ? `${app.company} — ${app.role}` : (cand.subject || match.company_hint || cand.from || 'Unknown');
     } else {
       headerStr = cand.subject || match.company_hint || cand.from || 'Unknown';
     }
@@ -260,16 +267,18 @@ async function main() {
     console.log(`   Suggested tracker update: ${classification.suggestedTrackerUpdate}`);
     console.log('');
 
-    if (match.application_num !== null && classification.suggestedTrackerUpdate !== 'none' && classification.suggestedTrackerUpdate !== 'Needs Review') {
-      const app = apps.find(a => a.num === match.application_num);
-      if (app && app.status !== classification.suggestedTrackerUpdate) {
-        recommendations.push({
-          num: app.num,
-          company: app.company,
-          role: app.role,
-          oldStatus: app.status,
-          newStatus: classification.suggestedTrackerUpdate
-        });
+    if (matchedApplicationNums.length > 0 && classification.suggestedTrackerUpdate !== 'none' && classification.suggestedTrackerUpdate !== 'Needs Review') {
+      for (const applicationNum of matchedApplicationNums) {
+        const app = apps.find(a => a.num === applicationNum);
+        if (app && app.status !== classification.suggestedTrackerUpdate) {
+          recommendations.push({
+            num: app.num,
+            company: app.company,
+            role: app.role,
+            oldStatus: app.status,
+            newStatus: classification.suggestedTrackerUpdate
+          });
+        }
       }
     }
   });
