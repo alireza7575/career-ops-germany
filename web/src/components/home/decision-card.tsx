@@ -3,12 +3,15 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Check, X, FileText, Loader2 } from "lucide-react";
+import { Check, X, FileText, Loader2, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { CompanyLogo } from "@/components/company-logo";
 import { scoreNum, scoreTone } from "@/lib/format";
 import { companyPresentation } from "@/lib/company-presentation.mjs";
 import type { Application } from "@/lib/career-ops";
+import { applyLineLabel } from "@/lib/report-sections.mjs";
+import { postingUrl } from "@/lib/report-decision.mjs";
+import { saveStatus } from "@/lib/pipeline-status.mjs";
 
 // Awaiting-decision row: a scored role with no terminal status. Primary action
 // opens the report (PDF + Apply live there). Skip / Applied still write status.
@@ -16,18 +19,23 @@ export function DecisionCard({ app }: { app: Application }) {
   const router = useRouter();
   const [busy, setBusy] = useState<"" | "Applied" | "Discarded">("");
   const [done, setDone] = useState<string | null>(null);
+  const [error, setError] = useState("");
   const score = scoreNum(app.score);
   const tone = scoreTone(app.score);
   const company = companyPresentation(app);
+  const url = postingUrl(app.applyLink);
+  const recommendation = applyLineLabel(app.score);
 
   const setStatus = async (status: "Applied" | "Discarded") => {
     setBusy(status);
+    setError("");
     try {
-      await fetch("/api/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ n: app.n, status }) });
-      setDone(status);
+      const confirmed = await saveStatus(app.n, app.status, status);
+      if (!confirmed) return;
+      setDone(confirmed);
       router.refresh();
-    } catch {
-      /* ignore */
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save status. Please try again.");
     } finally {
       setBusy("");
     }
@@ -54,6 +62,9 @@ export function DecisionCard({ app }: { app: Application }) {
           </span>
         )}
       </div>
+      <p className="text-xs font-medium text-muted">{recommendation === "Recommended" ? "Score meets the apply line" : recommendation ? "Score below the apply line" : "Assessment needs review"}</p>
+      {app.notes && app.notes !== "—" && <p className="line-clamp-2 text-xs leading-relaxed text-muted">{app.notes}</p>}
+      {url && <a href={url} target="_blank" rel="noreferrer" className="inline-flex min-h-[44px] items-center gap-1 text-xs text-brand hover:underline"><ExternalLink className="size-3.5" /> Read job post</a>}
       <div className="flex items-center gap-2">
         {/* Primary is the report (PDF + Apply live there). Marking Applied from
             Today skipped that path and wrote a status with no application. */}
@@ -61,7 +72,7 @@ export function DecisionCard({ app }: { app: Application }) {
           href={`/pipeline/${app.n}`}
           className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md bg-brand-soft px-2.5 py-1.5 text-xs font-medium text-brand-text transition hover:bg-brand/15 max-sm:min-h-[44px]"
         >
-          <FileText className="size-3.5" /> Review
+          <FileText className="size-3.5" /> Review decision
         </Link>
         <button
           type="button"
@@ -82,6 +93,7 @@ export function DecisionCard({ app }: { app: Application }) {
           Applied
         </button>
       </div>
+      {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
     </div>
   );
 }
