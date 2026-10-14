@@ -143,9 +143,8 @@ export function ReportView({
           {(() => {
             const { intro, sections } = splitSections(meta?.body ?? report);
             const verdictSection = sections.find((s) => isVerdictHeading(s.heading));
-            const rest = sections.filter((s) => s !== verdictSection);
-            const machine = rest.filter((s) => isMachine(s.heading));
-            const mainSections = rest.filter((s) => !isMachine(s.heading));
+            const machine = sections.filter((s) => isMachine(s.heading));
+            const mainSections = sections.filter((s) => !isMachine(s.heading));
             const reason = verdictReason({
               report,
               intro,
@@ -212,6 +211,7 @@ export function ReportView({
 
                 <details className="mt-6 rounded-xl border border-border p-4">
                   <summary className="min-h-[44px] cursor-pointer text-sm font-medium">Full assessment · evidence and interview preparation</summary>
+                {intro && <article className="report-prose mt-4"><ReportMarkdown>{intro}</ReportMarkdown></article>}
                 {mainSections.map((s, i) => {
                   return (
                     <details key={i} className="group mt-3 overflow-hidden rounded-xl border border-border bg-surface/30">
