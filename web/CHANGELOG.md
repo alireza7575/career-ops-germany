@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/alireza7575/career-ops-germany/compare/web-v0.14.0...web-v0.14.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **web:** clarify application reviews and confirm decision saves ([112df31](https://github.com/alireza7575/career-ops-germany/commit/112df31a6548836472124bf031ad9347f413c792))
+
 ## [0.14.0](https://github.com/alireza7575/career-ops-germany/compare/web-v0.13.0...web-v0.14.0) (2026-10-11)
 
 
