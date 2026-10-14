@@ -44,6 +44,12 @@ export function collectWhatsNew(rows, { cutoff, toOffer, offerLimit = DEFAULT_OF
   let anyDated = false;
 
   const add = (columns, limit) => {
+    // A later expired verdict retires the URL even though it is not an offer.
+    // Otherwise an older "added" row resurfaces as the reverse walk continues.
+    if (columns[5] === "skipped_expired" && columns[0]) {
+      seen.add(columns[0]);
+      return;
+    }
     const offer = toOffer(columns);
     if (!offer || seen.has(offer.url)) return;
     seen.add(offer.url);
