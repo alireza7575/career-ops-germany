@@ -618,12 +618,8 @@ function buildSkills(categories, partial) {
   return `<div class="skills-grid">\n${items}\n  </div>`;
 }
 
-// Rebuild the whole .contact-row block. Its markup uses fixed "|" separators
-// between phone / email / linkedin / github / portfolio / location, so an
-// absent optional field (phone, linkedin, github, portfolio) must drop BOTH
-// its <a> and one separator. Building the present items and joining them is
-// more robust than excising separators from the template one placeholder at
-// a time.
+// Rebuild the whole .contact-row block. The template's ::after rule attaches
+// each separator to the preceding item, so only present fields are emitted.
 function buildContactRow(candidate) {
   const c = candidate || {};
   const items = [];
@@ -649,8 +645,7 @@ function buildContactRow(candidate) {
   if (c.location) {
     items.push(`<span>${escapeHtml(c.location)}</span>`);
   }
-  const sep = '\n      <span class="separator">|</span>\n      ';
-  return `<div class="contact-row">\n      ${items.join(sep)}\n    </div>`;
+  return `<div class="contact-row">\n      ${items.join('\n      ')}\n    </div>`;
 }
 
 function buildPhoto(candidate, name) {
@@ -951,22 +946,21 @@ async function runSelfTest() {
     process.exit(1);
   }
 
-  // Guard the absent-field side of the same case: omitting candidate.github
-  // must drop both its anchor and its separator, leaving no dangling item.
+  // Omitting candidate.github must drop its whole contact item.
   const { github, ...candidateWithoutGithub } = sample.candidate;
   const htmlWithoutGithub = renderHtml(template, { ...sample, candidate: candidateWithoutGithub });
-  const countSeparators = (h) => (h.match(/class="separator"/g) || []).length;
+  const contactItems = (h) => h.match(/<div class="contact-row">([\s\S]*?)<\/div>/)?.[1].match(/<\/a>|<\/span>/g)?.length ?? 0;
   if (htmlWithoutGithub.includes('github.com/test')) {
     console.error('Self-test failed: github contact link rendered when candidate.github is absent');
     process.exit(1);
   }
-  if (countSeparators(htmlWithoutGithub) !== countSeparators(html) - 1) {
-    console.error('Self-test failed: omitting candidate.github left a dangling separator in the contact row');
+  if (contactItems(htmlWithoutGithub) !== contactItems(html) - 1) {
+    console.error('Self-test failed: omitting candidate.github left a dangling contact item');
     process.exit(1);
   }
 
   // Guard the rejected-scheme side: sanitizeUrl() must reject javascript:/data:
-  // github URLs, which must drop the item and separator exactly like an
+  // github URLs, which must drop the item exactly like an
   // absent field, never fall through to an empty href="".
   const htmlWithRejectedGithub = renderHtml(template, {
     ...sample,
@@ -976,8 +970,8 @@ async function runSelfTest() {
     console.error('Self-test failed: rejected github URL still rendered a contact item');
     process.exit(1);
   }
-  if (countSeparators(htmlWithRejectedGithub) !== countSeparators(html) - 1) {
-    console.error('Self-test failed: rejected github URL left a dangling separator in the contact row');
+  if (contactItems(htmlWithRejectedGithub) !== contactItems(html) - 1) {
+    console.error('Self-test failed: rejected github URL left a dangling contact item');
     process.exit(1);
   }
 
