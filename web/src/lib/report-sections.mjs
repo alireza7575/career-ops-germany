@@ -154,6 +154,9 @@ export function isLeadSection(section) {
  */
 export function firstProseParagraph(md) {
   const withoutTables = String(md ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/^#+\s.*$/gm, "")
     .split("\n")
     .map((l) => (/^\s*\|/.test(l) ? "" : l))
     .join("\n");
@@ -176,7 +179,7 @@ export function verdictReason(opts) {
   if (fromVerdict) return fromVerdict;
   const fromIntro = firstProseParagraph(opts?.intro ?? "");
   if (fromIntro) return fromIntro;
-  const header = String(opts?.report ?? "").split(/^---\s*$/m)[0] ?? "";
+  const header = String(opts?.report ?? "").replace(/\r\n/g, "\n").split(/^---\s*$|^##\s/m)[0] ?? "";
   const stripped = header
     .replace(/^#\s+.*$/m, "")
     .replace(/^\s*\*\*[^*]+:\*\*.*$/gm, "")
@@ -197,7 +200,7 @@ export function splitSections(body) {
   const sections = [];
   /** @type {{ heading: string, letter: string | null, lines: string[] } | null} */
   let cur = null;
-  for (const line of body.split("\n")) {
+  for (const line of body.split(/\r?\n/)) {
     const h = line.match(/^##\s+(.*)$/);
     if (h) {
       if (cur) sections.push({ heading: cur.heading, letter: cur.letter, content: cur.lines.join("\n").trim() });

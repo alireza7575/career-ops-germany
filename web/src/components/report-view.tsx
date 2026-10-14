@@ -2,13 +2,12 @@ import Link from "next/link";
 import { ArrowLeft, FileText, ExternalLink, ChevronDown } from "lucide-react";
 import type { Application } from "@/lib/career-ops";
 import { Badge } from "@/components/ui/badge";
-import { scoreTone, legitimacyTone, parseReport } from "@/lib/format";
+import { legitimacyTone, parseReport } from "@/lib/format";
 import {
   APPLY_LINE,
   applyCtaQuiet,
   applyLineLabel,
   cleanHeading,
-  isLeadSection,
   isVerdictHeading,
   splitSections,
   verdictReason,
@@ -22,20 +21,15 @@ import { ApplyButton } from "@/components/apply-button";
 import { DeleteFromTracker } from "@/components/delete-from-tracker";
 import { ReportMarkdown } from "@/components/report-markdown";
 import { companyPresentation } from "@/lib/company-presentation.mjs";
+import { postingUrl, reportDecision } from "@/lib/report-decision.mjs";
 
 // Progressive disclosure of the report. Current oferta.md writes letter F as
 // Interview Plan (STAR+R), not a verdict — never promote by letter (#3416).
 // The score + 4.0 apply line + legitimacy live in one Peak-End callout (#4203).
-// Block B (CV Match) stays open; everything else, including Role Summary and
-// STAR+R, is collapsed (#4205). Machine artifacts stay in the Technical tier.
+// The decision brief leads; evidence and machine artifacts stay collapsed.
 
 function isMachine(heading: string): boolean {
   return /machine summary|submitted|submit[-\s]?log/i.test(heading);
-}
-
-function httpUrl(url?: string | null): string | undefined {
-  if (!url) return undefined;
-  return /^https?:\/\//i.test(url) ? url : undefined;
 }
 
 function preview(md: string): string {
@@ -81,11 +75,12 @@ export function ReportView({
   const date = app?.date || field("Date");
   const archetype = field("Archetype");
   const url = field("URL");
-  const decision = field("Decision");
+  const brief = reportDecision(report ?? "");
+  const decision = brief.decision || field("Decision");
   const line = applyLineLabel(score ?? "");
   const recommended = line === "Recommended";
   const quietApply = applyCtaQuiet({ score, legitimacy: meta?.legitimacy });
-  const applyUrl = httpUrl(url);
+  const applyUrl = postingUrl(url, app?.applyLink);
   const pdfReady = (app?.pdf ?? "").includes("✅") || pdfReadyFromIndex;
   const company = app ? companyPresentation(app) : null;
   const companyName = company?.label ?? app?.company ?? meta?.title ?? id;
@@ -110,6 +105,11 @@ export function ReportView({
         {app?.role && <p className="mt-1 text-muted">{app.role}</p>}
 
         <div className="mt-4 flex flex-wrap items-center gap-2.5">
+          {applyUrl && (
+            <a href={applyUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-border px-3 py-1 text-sm font-medium text-brand hover:bg-surface-hover">
+              <ExternalLink className="size-4" /> Read job post
+            </a>
+          )}
           {app && <StatusSelect n={id} current={app.status} />}
           <GeneratePdfButton n={id} company={app?.company ?? meta?.title ?? id} pdfReady={pdfReady} />
           {coverReady && (
@@ -130,20 +130,10 @@ export function ReportView({
           </div>
         )}
 
-        {(archetype || date || applyUrl) && (
+        {(archetype || date) && (
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
             {archetype && <span className="max-w-full truncate">{archetype}</span>}
             {date && <span className="tabular-nums text-faint">{date}</span>}
-            {applyUrl && (
-              <a
-                href={applyUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center justify-center gap-1 text-brand hover:underline max-sm:min-h-[44px]"
-              >
-                posting <ExternalLink className="size-3" />
-              </a>
-            )}
           </div>
         )}
       </header>
@@ -153,9 +143,8 @@ export function ReportView({
           {(() => {
             const { intro, sections } = splitSections(meta?.body ?? report);
             const verdictSection = sections.find((s) => isVerdictHeading(s.heading));
-            const rest = sections.filter((s) => s !== verdictSection);
-            const machine = rest.filter((s) => isMachine(s.heading));
-            const mainSections = rest.filter((s) => !isMachine(s.heading));
+            const machine = sections.filter((s) => isMachine(s.heading));
+            const mainSections = sections.filter((s) => !isMachine(s.heading));
             const reason = verdictReason({
               report,
               intro,
@@ -166,7 +155,8 @@ export function ReportView({
               : "border-border bg-surface/50";
             const callout = (
               <div className={`rounded-2xl border px-5 py-5 ${verdictClass}`}>
-                <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-faint">Verdict</p>
+                <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-faint">Your decision brief</p>
+                <h2 className="mt-2 text-xl font-semibold">{decision === "Consider" ? "Clarify the concerns before applying" : decision === "Apply" ? "Recommended to apply" : decision === "Skip" || decision === "Discard" ? "Recommended to skip" : decision || line || "Review this opportunity"}</h2>
                 <div className="mt-2 flex flex-wrap items-end gap-x-3 gap-y-1">
                   {score ? (
                     <p className="font-display text-4xl tabular-nums tracking-tight text-landing">{score}</p>
@@ -176,12 +166,24 @@ export function ReportView({
                   <p className="pb-1 text-xs text-muted">Apply line is {APPLY_LINE.toFixed(1)}</p>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {score && <Badge tone={scoreTone(score)}>{score}</Badge>}
                   {line && <Badge tone={recommended ? "good" : "muted"}>{line}</Badge>}
                   {decision && <Badge tone="info">{decision}</Badge>}
                   {meta?.legitimacy && <Badge tone={legitimacyTone(meta.legitimacy)}>{meta.legitimacy}</Badge>}
                 </div>
-                {reason && <p className="mt-4 text-[15px] font-medium leading-relaxed text-foreground">{reason}</p>}
+                {brief.nextAction ? (
+                  <p className="mt-4 text-[15px] font-medium leading-relaxed text-foreground"><span className="text-muted">Next step: </span>{brief.nextAction}</p>
+                ) : reason ? <p className="mt-4 text-[15px] font-medium leading-relaxed text-foreground">{reason}</p> : <p className="mt-4 text-sm text-muted">No short assessment was saved. Expand the full assessment below for the evidence.</p>}
+                {(brief.strengths.length > 0 || brief.concerns.length > 0) && (
+                  <div className="mt-5 grid gap-5 sm:grid-cols-2">
+                    {([{ title: "Why it fits", items: brief.strengths }, { title: "What needs attention", items: brief.concerns }]).map(({ title, items }) => items.length > 0 && (
+                      <div key={title}>
+                        <h3 className="text-sm font-semibold">{title}</h3>
+                        <ul className="mt-2 space-y-2 text-sm leading-relaxed text-muted">{items.map((item: string, i: number) => <li key={i} className="flex gap-2"><span aria-hidden="true">•</span><span>{item}</span></li>)}</ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {brief.confidence && <p className="mt-4 text-xs text-muted">Assessment confidence: {brief.confidence}</p>}
                 <div className="mt-4">
                   <ApplyButton
                     n={id}
@@ -197,9 +199,9 @@ export function ReportView({
               return (
                 <div className="mt-8">
                   {callout}
-                  <article className="report-prose mt-6">
+                  <details className="mt-6 rounded-xl border border-border p-4"><summary className="min-h-[44px] cursor-pointer text-sm font-medium">Full assessment</summary><article className="report-prose mt-4">
                     <ReportMarkdown>{meta?.body ?? report}</ReportMarkdown>
-                  </article>
+                  </article></details>
                 </div>
               );
             }
@@ -207,16 +209,10 @@ export function ReportView({
               <div className="mt-8">
                 {callout}
 
+                <details className="mt-6 rounded-xl border border-border p-4">
+                  <summary className="min-h-[44px] cursor-pointer text-sm font-medium">Full assessment · evidence and interview preparation</summary>
+                {intro && <article className="report-prose mt-4"><ReportMarkdown>{intro}</ReportMarkdown></article>}
                 {mainSections.map((s, i) => {
-                  const expanded = isLeadSection(s);
-                  if (expanded) {
-                    return (
-                      <article key={i} className="report-prose mt-6">
-                        <h2>{cleanHeading(s.heading)}</h2>
-                        <ReportMarkdown>{s.content}</ReportMarkdown>
-                      </article>
-                    );
-                  }
                   return (
                     <details key={i} className="group mt-3 overflow-hidden rounded-xl border border-border bg-surface/30">
                       <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 px-4 py-3 transition-colors hover:bg-surface-hover">
@@ -251,6 +247,7 @@ export function ReportView({
                     ))}
                   </>
                 )}
+                </details>
               </div>
             );
           })()}

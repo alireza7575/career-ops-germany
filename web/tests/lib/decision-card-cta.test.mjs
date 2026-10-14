@@ -15,5 +15,5 @@ test("Today primary action opens the report, not Mark applied", () => {
   assert.notEqual(primary, -1);
   assert.notEqual(mark, -1);
   assert.ok(primary < mark, "report link must come before the Applied writer");
-  assert.match(src, /> Review\s*</);
+  assert.match(src, /> Review decision\s*</);
 });
