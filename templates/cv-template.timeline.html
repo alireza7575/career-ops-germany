@@ -119,7 +119,7 @@ name: Timeline
   }
 
   .contact-row > a,
-  .contact-row > span:not(.separator) {
+  .contact-row > span {
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -132,8 +132,10 @@ name: Timeline
     flex: 0 0 auto;
   }
 
-  .contact-row .separator {
+  .contact-row > *:not(:last-child)::after {
+    content: "|";
     color: #aeb8c2;
+    margin-inline-start: 14px;
   }
 
   /* === OPTIONAL PROFILE PHOTO (opt-in, DACH/European markets — #264) === */
@@ -682,13 +684,9 @@ name: Timeline
     <div class="header-gradient"></div>
     <div class="contact-row">
       <a href="tel:{{PHONE}}">{{PHONE}}</a>
-      <span class="separator">|</span>
       <a href="mailto:{{EMAIL}}">{{EMAIL}}</a>
-      <span class="separator">|</span>
       <a href="{{LINKEDIN_URL}}">{{LINKEDIN_DISPLAY}}</a>
-      <span class="separator">|</span>
       <a href="{{PORTFOLIO_URL}}">{{PORTFOLIO_DISPLAY}}</a>
-      <span class="separator">|</span>
       <span>{{LOCATION}}</span>
     </div>
   </div>

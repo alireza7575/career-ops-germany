@@ -43,6 +43,19 @@ test("duplicate URLs count once even when walking the full history", () => {
   assert.equal(result.offers[0].title, "New title");
 });
 
+test("a later expired verdict retires an older added row", () => {
+  const url = "https://example.com/closed";
+  const rows = [
+    header,
+    `${url}\t2026-08-09\ttest\tOld title\tAcme\tadded\tRemote`,
+    `${url}\t2026-08-10\ttest\tOld title\tAcme\tskipped_expired\tRemote`,
+  ];
+  assert.deepEqual(collectWhatsNew(rows, {
+    cutoff: Date.parse("2026-08-03"),
+    toOffer: (columns) => columns[5] === "added" ? toOffer(columns) : null,
+  }), { offers: [], count: 0 });
+});
+
 test("legacy append-order fallback also reports the complete count", () => {
   const rows = [
     header,
