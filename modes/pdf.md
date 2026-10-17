@@ -86,14 +86,14 @@ Run `npm run jd:similarity -- {bundle-root}/jd/current.md {bundle-root}/jd/previ
     - Resolve the template with `node cv-templates.mjs resolve cv ats` and render: `node build-cv-html.mjs /tmp/cv-{candidate}-{company}-ats.json output/cv-{candidate}-{company}-ats.html {ats-template}`. The output path is `output/` even when the styled CV lives in an application bundle. In this version the ATS variant is something you paste, not something you attach, so it is not a bundle artifact and not the tracker's `PDF` column. That column still reads from the styled PDF alone.
     - Gate it: `node verify-cv-facts.mjs output/cv-{candidate}-{company}-ats.html`. The fold cannot add a claim, but Step 19 allows fixing a gate failure in the styled **HTML**, and a fix made there never reaches the JSON this variant is built from. Gating the variant catches that drift instead of shipping it. If it fails, fix the Step 17 payload (not either HTML file), rebuild both, and re-run both gates.
     - No PDF by default: the user copies the text out of the HTML. If they want an uploadable file too, run `node generate-pdf.mjs output/cv-{candidate}-{company}-ats.html output/cv-{candidate}-{company}-ats-{YYYY-MM-DD}.pdf --format={letter|a4}` **without** `--report`. With `--report`, the ATS PDF would be indexed against the report and replace the styled pair the dashboard opens and regenerates.
-22. Verify ATS keyword coverage of the **tailored** CV against the role's evaluation report (when one exists): `node keyword-match.mjs "reports/{###}-{company-slug}-{YYYY-MM-DD}.md" --cv "{html-path}"`. Pass the report's full filename (e.g. `reports/008-acme-2026-09-28.md`), not the bare NNN that Step 21's `--report` takes, and keep both paths quoted. This text-extracts the HTML you just built and reports coverage %, present, thin, and missing keywords — the diagnostic for the document being sent. Surface any missing/thin keywords to the user (reformulate from real experience, never fabricate).
-23. Report: PDF path, number of pages, keyword coverage % (when Step 22 ran), the ATS variant's HTML path and any lint findings the user left open (when Step 21a ran), and any skill gaps from Step 4 still unaddressed
+22. Verify ATS keyword coverage of the **tailored** CV against the role's evaluation report (when one exists): `node keyword-match.mjs "reports/{###}-{company-slug}-{YYYY-MM-DD}.md" --cv "{html-path}"`. Pass the report's full filename (e.g. `reports/008-acme-2026-09-28.md`), not the bare NNN that Step 21's `--report` takes, and keep both paths quoted. This text-extracts the HTML you just built and reports coverage %, present, thin, and missing keywords — the diagnostic for the document being sent. Surface any missing/thin keywords to the user (reformulate from real experience, never fabricate). If the report has no keyword section, the command prints a `⚠️` line on stderr and scores the skills it finds in the report's archived JD instead. That is a defect in the report, not a pass: tell the user, and add the keyword section to the report. If it exits 1, coverage did not run. Say so in Step 23 rather than leaving the number out.
+23. Report: PDF path, number of pages, keyword coverage % and whether its keywords came from the report or the archived JD (when Step 22 ran), the ATS variant's HTML path and any lint findings the user left open (when Step 21a ran), and any skill gaps from Step 4 still unaddressed
 
 ## ATS Rules (clean parsing)
 
 - Single-column layout (no sidebars, no parallel columns)
 - Standard headers: "Professional Summary", "Work Experience", "Education", "Skills", "Certifications", "Projects"
-- Optional sections (Core Competencies, Work Experience, Projects, Education, Certifications, Awards & Honors, Skills) are dropped entirely — header included — when their array is empty or absent
+- Optional sections (Professional Summary, Core Competencies, Work Experience, Projects, Education, Certifications, Awards & Honors, Skills) are dropped entirely — header included — when their array is empty or absent, or for Professional Summary when its text is empty or whitespace-only
 - No text in images/SVGs
 - No critical info in PDF headers/footers (ATS ignores them)
 - UTF-8, selectable text (not rasterized)
@@ -292,7 +292,7 @@ The `{{PHOTO}}` slot is **off by default** and intentionally market-specific:
 
 When set, the photo floats into the top corner (mirrored for RTL/Arabic) and the header/summary text wraps beside it; `.cv-photo` in `cv-template.html` controls its size and framing.
 
-Local photo paths may be absolute or relative to the career-ops project root.
+Local photo paths may be absolute or relative to the career-ops project root. The builder reads a local path only when the payload's `candidate.photo` equals the value in `config/profile.yml`; any other local path is refused, because the payload is written from an untrusted posting. `data:` and `http(s)` values are unaffected.
 The builder validates PNG, JPEG, WebP, and GIF inputs and inlines them as data
 URLs so the saved HTML remains portable. To inspect the result before PDF
 generation, run:
@@ -303,6 +303,14 @@ node build-cv-html.mjs --preview /tmp/cv-{candidate}-{company}.json {template}
 
 The preview is written to `output/cv-preview.html`. A missing, unreadable, empty,
 or unsupported photo fails with an actionable error before any output is written.
+
+To read a built CV as prose without a browser (headless runs, or diffing against `cv.md`), render the same payload to markdown. It is zero-token, re-runs no tailoring, and uses the same resolved section titles and entry filtering as the HTML:
+
+```bash
+node build-cv-html.mjs /tmp/cv-{candidate}-{company}.json --markdown {output.md} {template}
+```
+
+Pass the same `{template}` the HTML build used (omit it for the default template) so the markdown follows that template's section order.
 
 ## Canva CV Generation (optional)
 
@@ -414,4 +422,4 @@ Do not auto-generate the cover letter PDF without going through the interactive 
 
 ## Post-generation
 
-Update tracker if the job is already registered: change PDF from ❌ to ✅.
+If the job is already in the tracker, flip its PDF cell from ❌ to ✅ with `node mark-pdf-ready.mjs {report number}` (the same report number passed to `--report` above). Do not edit `data/applications.md` by hand.

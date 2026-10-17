@@ -5,13 +5,14 @@
  * Checks all prerequisites and prints a pass/fail checklist.
  */
 
-import { constants, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { constants, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { homedir } from 'os';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
 import dotenv from 'dotenv';
+import { findTitleFilterConflicts } from './lib/title-filter-conflicts.mjs';
 import { discoverPlugins, pluginRoots, pluginStatus } from './plugins/_engine.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { validateProfile, EXAMPLE_PATH } from './validate-profile.mjs';
@@ -19,6 +20,7 @@ import { resolveExtractorMode } from './browser-extract.mjs';
 import { parseConfigByExtension } from './jsonc-parse.mjs';
 import { validateFlags } from './lib/cli-flags.mjs';
 import { geminiNodeFloor } from './lib/gemini-node-floor.mjs';
+import { SKILL_ENTRYPOINTS } from './scaffolder/bin/skill-entrypoints.mjs';
 import { nodeFloor } from './lib/node-floor.mjs';
 import { findExperienceSections, parseCompanyHeading, EXPERIENCE_HEADING_NAMES } from './lib/cv-markdown.mjs';
 
@@ -241,6 +243,106 @@ function checkTrackedBakFiles(root) {
   };
 }
 
+// A checkout made without symlink support (Windows without Developer Mode,
+// core.symlinks=false) writes each per-CLI skill entrypoint as a regular file
+// holding only the symlink target text, so that CLI loads a ~43-byte skill with
+// no router in it (career-ops#4589). update-system.mjs apply repairs these via
+// ensureSkillEntrypoints, but apply returns early on an install that is already
+// up to date, so a fresh clone never reaches it and nothing else says why
+// /career-ops does nothing. Read-only on purpose (doctor must not write): it
+// names the stubs and the one command that materializes them.
+// One script for every shell, deliberately free of quote characters so each
+// shell can wrap it in its own: backticks for the one string, and both paths
+// arrive as separate argv words, never interpolated into the script. (Read back
+// with argv.at(-n): tests/main-guard-convention.test.mjs bans the literal
+// entry-path index in source files, printed strings included.)
+const MATERIALIZE_SCRIPT = 'import(require(`url`).pathToFileURL(process.argv.at(-2)).href).then(m=>console.log(m.materializeSkillEntrypoints(process.argv.at(-1))))';
+
+// --target accepts any path, so what is printed has to be literal when pasted.
+// Each shell expands something different inside the quoting it prefers:
+//   sh          single quotes are fully literal; a quote is closed, escaped, reopened
+//   PowerShell  single quotes are literal ($(...), $HOME stay text); a quote is
+//               escaped by doubling it, and PowerShell also treats the curly
+//               and low quotes as quote characters, so those double too
+//   cmd         double quotes are the only form, and %VAR% is expanded inside
+//               them with no escape on an interactive line (a Windows path may
+//               contain %, and a double quote cannot occur in one)
+const quoteSh = (v) => `'${v.replace(/'/g, `'\\''`)}'`;
+const quotePowerShell = (v) => `'${v.replace(/['\u2018\u2019\u201A\u201B]/g, (c) => c + c)}'`;
+const quoteCmd = (v) => `"${v}"`;
+
+function repairCommands(root) {
+  const mod = join(root, 'scaffolder', 'bin', 'skill-entrypoints.mjs');
+  const updater = join(root, 'update-system.mjs');
+  const forms = (quote) => ({
+    materialize: `node -e ${quote(MATERIALIZE_SCRIPT)} ${quote(mod)} ${quote(root)}`,
+    update: `node ${quote(updater)} apply --confirm`,
+  });
+  const lines = [];
+  const section = (heading, f) => lines.push(heading.materialize, f.materialize, heading.update, f.update);
+  const heading = {
+    materialize: 'Repair them now, no update needed:',
+    update: 'Or update (this only repairs them when an update is actually applied):',
+  };
+  if (process.platform !== 'win32') {
+    section(heading, forms(quoteSh));
+    return lines;
+  }
+  const label = (shell) => ({
+    materialize: `${heading.materialize} (${shell})`,
+    update: `${heading.update} (${shell})`,
+  });
+  section(label('PowerShell'), forms(quotePowerShell));
+  if (root.includes('%')) {
+    lines.push('cmd.exe form not shown: this path contains %, which cmd always expands. Use the PowerShell commands above.');
+  } else {
+    section(label('cmd.exe'), forms(quoteCmd));
+  }
+  return lines;
+}
+
+function checkSkillEntrypoints(root) {
+  const stubs = [];
+  for (const entry of SKILL_ENTRYPOINTS) {
+    const entryPath = join(root, ...entry.path.split('/'));
+    try {
+      const stat = lstatSync(entryPath);
+      if (stat.isSymbolicLink() || !stat.isFile()) continue;
+      if (readFileSync(entryPath, 'utf-8').trim() === entry.pointer) stubs.push(entry.path);
+    } catch {
+      // Missing or unreadable: not a stub. A CLI the user never installed is
+      // not worth a warning, and ensureSkillEntrypoints creates absent ones.
+    }
+  }
+  if (stubs.length === 0) {
+    return { pass: true, label: 'CLI skill entrypoints are real files or symlinks' };
+  }
+  return {
+    warn: true,
+    label: `${stubs.length} CLI skill entrypoint${stubs.length === 1 ? ' is' : 's are'} a symlink-target stub, not the skill — this checkout has no symlink support, so that CLI loads an empty /career-ops`,
+    // Materializing first: it is the repair that works on the clone this
+    // warning is most likely for, one that is already up to date, where apply
+    // returns before reaching ensureSkillEntrypoints. Both are built from the
+    // root the check just inspected, so they act on that checkout from whatever
+    // directory they are pasted into.
+    fix: [
+      ...stubs,
+      ...repairCommands(root),
+    ],
+  };
+}
+
+// The browsers `npx playwright install` downloads are dynamically linked against
+// FHS library paths, so on NixOS they fail to start (libglib-2.0.so.0 not
+// found). The flake dev shell points Playwright at nixpkgs' patched browsers
+// instead, and is the only fix that works there.
+function playwrightInstallFix() {
+  if (existsSync('/etc/NIXOS')) {
+    return 'On NixOS, run career-ops inside the flake dev shell (`nix develop`, or `direnv allow`) and re-enter it after `npm install`. Do not run `npx playwright install`: NixOS cannot run the browsers it downloads. See docs/NIXOS.md.';
+  }
+  return 'Run: npx playwright install chromium';
+}
+
 async function checkPlaywright() {
   let chromium;
   try {
@@ -249,7 +351,7 @@ async function checkPlaywright() {
     return {
       pass: false,
       label: 'Playwright chromium not installed',
-      fix: 'Run: npx playwright install chromium',
+      fix: playwrightInstallFix(),
     };
   }
   // Validate by launching — chromium.executablePath() points at Chrome for Testing
@@ -265,7 +367,7 @@ async function checkPlaywright() {
     return {
       pass: false,
       label: 'Playwright chromium not installed',
-      fix: 'Run: npx playwright install chromium',
+      fix: playwrightInstallFix(),
     };
   } finally {
     try { await browser?.close(); } catch { /* ignore */ }
@@ -275,19 +377,24 @@ async function checkPlaywright() {
 // Per-CLI MCP config registry. `plugins: true` marks a CLI whose MCP servers
 // can also arrive from outside the project root: from .claude.json or from an
 // installed plugin (see isPlaywrightMcpFromClaudeJson, isPlaywrightMcpFromPlugin).
+// `userFiles` marks a CLI whose USER-level config can also carry servers
+// (see opencodeUserConfigFiles).
 const MCP_CONFIGS = [
   { cli: 'claude',   files: ['.mcp.json', '.claude/settings.json', '.claude/settings.local.json'], plugins: true },
   // opencode.jsonc is JSONC: OpenCode accepts comments and trailing commas
   // there, and JSON.parse throwing on them used to read as "no MCP server
   // configured" (#2252).
-  { cli: 'opencode', files: ['opencode.json', 'opencode.jsonc'] },
+  { cli: 'opencode', files: ['opencode.json', 'opencode.jsonc'], userFiles: () => opencodeUserConfigFiles() },
 ];
 
-// Server qualifies if its definition references the @playwright/mcp package.
+// Server qualifies if its definition references the @playwright/mcp package,
+// or the `mcp-server-playwright` binary that package installs. nixpkgs ships
+// the binary on its own (pkgs.playwright-mcp, in the flake dev shell), so a
+// NixOS config names the command and never mentions the npm package.
 function isPlaywrightServer(server) {
   if (!server || typeof server !== 'object') return false;
   const blob = JSON.stringify(server).toLowerCase();
-  return blob.includes('@playwright/mcp');
+  return blob.includes('@playwright/mcp') || blob.includes('mcp-server-playwright');
 }
 
 // Any bucket shape that can hold a server map. A plugin's own .mcp.json is a
@@ -315,6 +422,63 @@ function readConfigIfPresent(file) {
 // the tests point it at a tmpdir so this never reads the real machine.
 function claudeConfigDir() {
   return process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+}
+
+// OpenCode's USER-level config sources, in ASCENDING precedence order
+// (opencode.ai/docs/config#precedence-order: global → $OPENCODE_CONFIG →
+// project): ~/.config/opencode/opencode.json[c] (XDG_CONFIG_HOME honored),
+// then $OPENCODE_CONFIG_DIR as a second config-directory candidate, then the
+// $OPENCODE_CONFIG file. Config sources MERGE — the custom directory is
+// loaded after the global config and overrides it, it never replaces it — so
+// setting $OPENCODE_CONFIG_DIR must not take the default global dir out of
+// the scan. Same reasoning as isPlaywrightMcpFromClaudeJson: a server
+// installed at user level is installed and working, so a project-only scan
+// would report a machine that has Playwright MCP as unconfigured. Missing or
+// malformed files read as null.
+function opencodeUserConfigFiles() {
+  const names = ['opencode.json', 'opencode.jsonc'];
+  const files = [];
+  const globalDir = process.env.XDG_CONFIG_HOME
+    ? join(process.env.XDG_CONFIG_HOME, 'opencode')
+    : join(homedir(), '.config', 'opencode');
+  for (const name of names) files.push(join(globalDir, name));
+  const customDir = process.env.OPENCODE_CONFIG_DIR;
+  if (customDir && customDir !== globalDir) {
+    for (const name of names) files.push(join(customDir, name));
+  }
+  if (process.env.OPENCODE_CONFIG) files.push(process.env.OPENCODE_CONFIG);
+  return files;
+}
+
+// The MCP server map one OpenCode config source contributes: the documented
+// flat shape (`mcp: { name: {...} }`), the `mcp: { servers: {...} }` wrapper
+// seen in the wild, and — for configs copied between CLIs — Claude's
+// `mcpServers` bucket.
+function opencodeServerMap(cfg) {
+  if (!cfg || typeof cfg !== 'object') return {};
+  const mcp = (cfg.mcp && typeof cfg.mcp === 'object') ? cfg.mcp : {};
+  const { servers, ...flat } = mcp;
+  return {
+    ...(cfg.mcpServers && typeof cfg.mcpServers === 'object' ? cfg.mcpServers : {}),
+    ...(servers && typeof servers === 'object' ? servers : {}),
+    ...flat,
+  };
+}
+
+// OpenCode MERGES config sources — "Configuration files are merged together,
+// not replaced", later sources overriding earlier ones per SERVER NAME, with
+// `enabled: false` keeping a server from starting (opencode.ai/docs/config,
+// opencode.ai/docs/mcp-servers). So an any-file-contains scan is wrong in
+// both directions: a project file that redefines the inherited `playwright`
+// name — as a disable or as a replacement — must win over a user-level
+// server, and a user-level server must still count when the project file
+// never mentions it. Configs arrive in ASCENDING precedence order; the
+// answer is about the EFFECTIVE entry.
+function hasPlaywrightInMergedOpenCode(configs) {
+  const effective = {};
+  for (const cfg of configs) Object.assign(effective, opencodeServerMap(cfg));
+  return Object.values(effective)
+    .some((def) => def && def.enabled !== false && isPlaywrightServer(def));
 }
 
 // A Claude Code plugin declares its MCP servers in its own .mcp.json, which
@@ -388,6 +552,16 @@ function isPlaywrightMcpFromClaudeJson(root) {
 function isPlaywrightMcpConfigured(root, activeCli) {
   const entry = MCP_CONFIGS.find((c) => c.cli === activeCli);
   if (!entry) return false; // known CLI but no MCP file mapping; caller warns
+  // OpenCode reads every source below (user-level configs, then the project)
+  // and MERGES them, so the question is about the effective server map — not
+  // whether any one file mentions the package (hasPlaywrightInMergedOpenCode).
+  if (entry.userFiles) {
+    const configs = [
+      ...entry.userFiles(),
+      ...entry.files.map((rel) => join(root, ...rel.split('/'))),
+    ].map(readConfigIfPresent).filter(Boolean);
+    return hasPlaywrightInMergedOpenCode(configs);
+  }
   const inProject = entry.files.some((rel) => {
     const file = join(root, ...rel.split('/'));
     return hasPlaywrightIn(readConfigIfPresent(file));
@@ -400,10 +574,11 @@ function isPlaywrightMcpConfigured(root, activeCli) {
 }
 
 // CLI resolution: --cli flag > $CAREER_OPS_CLI > .env (CAREER_OPS_CLI=...) >
-// default ('claude'). An unknown value at ANY level returns the sentinel
-// 'unknown' and produces no output — CLI-dependent checks are silently
-// skipped. .env parsing is best-effort: missing file is normal, malformed
-// values are caught per call below.
+// runtime marker (OPENCODE=1 → opencode) > checkout hint (an opencode.json
+// with no Claude MCP config beside it) > default ('claude'). An unknown value
+// at ANY level returns the sentinel 'unknown' and produces no output —
+// CLI-dependent checks are silently skipped. .env parsing is best-effort:
+// missing file is normal, malformed values are caught per call below.
 function resolveActiveCli() {
   if (cliFlag !== undefined && cliFlag !== null) {
     if (!VALID_CLIS.includes(cliFlag)) {
@@ -425,6 +600,26 @@ function resolveActiveCli() {
       return { cli: 'unknown', source: '.env', warning: `CAREER_OPS_CLI in .env is not a recognized CLI. Valid: ${VALID_CLIS.join(', ')}.` };
     }
     return { cli: process.env.CAREER_OPS_CLI, source: '.env' };
+  }
+  // Runtime marker: OpenCode stamps OPENCODE=1 on every process it runs.
+  // Without this, doctor started from inside OpenCode falls through to the
+  // claude default and then scans Claude's MCP configs — reporting "Playwright
+  // MCP not detected" on a machine where it is configured in opencode.json.
+  // Exact match: a user who sets OPENCODE=0 to opt out keeps the default.
+  if (process.env.OPENCODE === '1') {
+    return { cli: 'opencode', source: 'auto' };
+  }
+  // Checkout hint: an opencode.json/opencode.jsonc in the launch directory
+  // with NO Claude MCP config beside it means this checkout is driven from
+  // OpenCode (shell runs inside OpenCode are already caught by the marker
+  // above; a checkout carrying .mcp.json/.claude config stays on the claude
+  // default, so dual-config checkouts behave exactly as before).
+  const cwd = process.cwd();
+  const hasOpenCodeCfg = ['opencode.json', 'opencode.jsonc'].some((f) => existsSync(join(cwd, f)));
+  const hasClaudeCfg = ['.mcp.json', '.claude/settings.json', '.claude/settings.local.json']
+    .some((f) => existsSync(join(cwd, f)));
+  if (hasOpenCodeCfg && !hasClaudeCfg) {
+    return { cli: 'opencode', source: 'auto' };
   }
   return { cli: 'claude', source: 'default' };
 }
@@ -457,7 +652,7 @@ function checkPlaywrightMcp(root, activeCli) {
         ? `No project-level MCP config, no server in .claude.json (~/.claude.json, or $CLAUDE_CONFIG_DIR/.claude.json when set), and no enabled plugin providing one, was detected for ${activeCli}.`
         : `No project-level MCP config was detected for ${activeCli}.`,
       activeCli === 'opencode'
-        ? 'Add the Playwright MCP server to opencode.json (see opencode.example.json) or pass --cli <name> if you actually run a different CLI.'
+        ? 'Add the Playwright MCP server to opencode.json (project; see opencode.example.json) or to the global ~/.config/opencode/opencode.json[c] (or $OPENCODE_CONFIG), or pass --cli <name> if you actually run a different CLI.'
         : `Add the Playwright MCP server to your ${activeCli} config, or install a plugin that provides it (e.g. /plugin install playwright@claude-plugins-official).`,
     ],
   };
@@ -510,6 +705,7 @@ const USER_LAYER_PREREQS = [
   },
   {
     path: 'portals.yml',
+    env: 'CAREER_OPS_PORTALS',
     fix: [
       'Run: cp templates/portals.example.yml portals.yml',
       'Then customize with your target companies',
@@ -517,12 +713,24 @@ const USER_LAYER_PREREQS = [
   },
 ];
 
-function prereqPresent(root, path) {
-  return existsSync(join(root, ...path.split('/')));
+const CLI_NAMES = 'claude, codex, gemini, opencode, qwen, agy or grok';
+
+// The lane variables (CAREER_OPS_PORTALS, CAREER_OPS_PIPELINE) move one file
+// out of the data root, and the scanner reads them (path-resolver.mjs), so
+// doctor has to look where a scan would.
+const PORTALS_PREREQ = USER_LAYER_PREREQS.find(({ path }) => path === 'portals.yml');
+
+function prereqFile(root, { path, env }) {
+  return (env && process.env[env]) || join(root, ...path.split('/'));
 }
 
-function checkPrereq({ path, fix }) {
-  if (prereqPresent(projectRoot, path)) {
+function prereqPresent(root, prereq) {
+  return existsSync(prereqFile(root, prereq));
+}
+
+function checkPrereq(prereq) {
+  const { path, fix } = prereq;
+  if (prereqPresent(projectRoot, prereq)) {
     return { pass: true, label: `${path} found` };
   }
   return { warn: true, label: `${path} not found (user setup required)`, fix };
@@ -579,7 +787,7 @@ function checkAutoDir(name) {
 // verify-portals.mjs so there is one probing implementation. Network-bound,
 // hence opt-in.
 async function checkPortalSlugs(root) {
-  const portalsPath = join(root, 'portals.yml');
+  const portalsPath = prereqFile(root, PORTALS_PREREQ);
   if (!existsSync(portalsPath)) {
     return { pass: true, label: 'Portal entries: no portals.yml yet (skipped)' };
   }
@@ -633,18 +841,22 @@ Paste job URLs below as \`- [ ] {url}\` then run \`/career-ops pipeline\`.
 `;
 
 function checkPipelineFile() {
-  const filePath = join(projectRoot, 'data', 'pipeline.md');
+  const filePath = process.env.CAREER_OPS_PIPELINE || join(projectRoot, 'data', 'pipeline.md');
+  const shown = process.env.CAREER_OPS_PIPELINE ? filePath : 'data/pipeline.md';
   if (existsSync(filePath)) {
-    return { pass: true, label: 'data/pipeline.md ready' };
+    return { pass: true, label: `${shown} ready` };
   }
   try {
+    mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, PIPELINE_SKELETON, 'utf-8');
-    return { pass: true, label: 'data/pipeline.md ready (auto-created)' };
+    return { pass: true, label: `${shown} ready (auto-created)` };
   } catch {
     return {
       pass: false,
-      label: 'data/pipeline.md could not be created',
-      fix: 'Run: mkdir -p data && touch data/pipeline.md',
+      label: `${shown} could not be created`,
+      fix: process.env.CAREER_OPS_PIPELINE
+        ? `Run: mkdir -p "$(dirname "$CAREER_OPS_PIPELINE")" && touch "$CAREER_OPS_PIPELINE"`
+        : 'Run: mkdir -p data && touch data/pipeline.md',
     };
   }
 }
@@ -772,6 +984,7 @@ async function main() {
     checkBillingSource(),
     checkDependencies(),
     checkTrackedBakFiles(codeRoot),
+    checkSkillEntrypoints(codeRoot),
     await checkPlaywright(),
     checkPlaywrightMcp(process.cwd(), activeCli),
     checkScanExtractor(projectRoot),
@@ -779,6 +992,7 @@ async function main() {
     checkFonts(),
     checkPersonalization(projectRoot),
     checkProfileShape(projectRoot),
+    checkTitleFilterConflicts(projectRoot),
     checkCvShape(projectRoot),
     checkAutoDir('data'),
     checkPipelineFile(),
@@ -820,12 +1034,26 @@ async function main() {
   }
 
   console.log('');
+  const setupMissing = USER_LAYER_PREREQS.filter((prereq) => !prereqPresent(projectRoot, prereq));
+  const setupNote = setupMissing.length > 0
+    ? `Setup is not finished (${setupMissing.length} file${setupMissing.length === 1 ? '' : 's'} missing: ${setupMissing.map(({ path }) => path).join(', ')})`
+    : null;
+  const setupHint = `Open your AI CLI in this folder (${CLI_NAMES}) and it walks you through setup by chatting.`;
   if (failures > 0) {
     console.log(`Result: ${failures} issue${failures === 1 ? '' : 's'} found. Fix them and run \`npm run doctor\` again.`);
+    if (setupNote) {
+      console.log(`${setupNote}.`);
+      console.log(setupHint);
+    }
     process.exit(1);
   } else {
     const warnNote = warnings > 0 ? ` (${warnings} warning${warnings === 1 ? '' : 's'} — see above)` : '';
-    console.log(`Result: All checks passed${warnNote}. You're ready to go! Run \`claude\` (or \`opencode\`) to start.`);
+    if (setupNote) {
+      console.log(`Result: ${setupNote}${warnNote}.`);
+      console.log(setupHint);
+    } else {
+      console.log(`Result: All checks passed${warnNote}. You're ready to go! Open your AI CLI in this folder (${CLI_NAMES}) to start.`);
+    }
     console.log('');
     console.log('Join the community: https://discord.gg/8pRpHETxa4');
     console.log('Read the manifesto: `npm run manifesto` — a new way of job searching is taking shape, and you are now part of it.');
@@ -896,6 +1124,8 @@ function unpersonalizedFiles(root) {
 }
 
 function checkPersonalization(root) {
+  const absent = PERSONALIZATION_FILES.filter(({ path }) => !existsSync(join(root, ...path.split('/'))));
+  if (absent.length === PERSONALIZATION_FILES.length) return null;
   const stale = unpersonalizedFiles(root);
   if (stale.length === 0) {
     return { label: 'Personalization files customized', pass: true };
@@ -912,6 +1142,41 @@ function checkPersonalization(root) {
 // prerequisites that AGENTS.md "First Run" lists. `--json` turns the trigger into
 // a deterministic mechanism the agent runs (instead of re-deriving it from prose),
 // and `--target <dir>` lets the test suite point it at a simulated virgin env.
+function titleFilterConflicts(root) {
+  // Same override the scanner honours (scan.mjs PORTALS_PATH), so a diagnosis
+  // describes the file a scan would actually read, not the default one.
+  const portalsPath = prereqFile(root, PORTALS_PREREQ);
+  if (!existsSync(portalsPath)) return null;
+  let config;
+  try {
+    config = yaml.load(readFileSync(portalsPath, 'utf-8'));
+  } catch {
+    // A portals.yml that does not parse is a different check's problem; this
+    // one only has something to say about a file it could actually read.
+    return null;
+  }
+  const { conflicts } = findTitleFilterConflicts(config?.title_filter);
+  return conflicts.length > 0 ? conflicts : null;
+}
+
+// `main()` feeds the ordinary human-readable run; onboardingState() feeds
+// `--json`. Both need this check, and it is non-blocking in both: a positive
+// its own negatives veto is a configuration smell to fix, not a reason to
+// refuse to start, so it reports as a warning rather than a failure.
+function checkTitleFilterConflicts(root) {
+  const conflicts = titleFilterConflicts(root);
+  if (!conflicts) return { label: 'title_filter positives all reachable', pass: true };
+  const n = conflicts.length;
+  return {
+    label: `title_filter: ${n} positive${n === 1 ? '' : 's'} never keeps a title`,
+    warn: true,
+    fix: conflicts.flatMap((c) => [
+      `"${c.positive}" stands for "${c.title}", which negative "${c.negative}" vetoes`,
+      '  ask your agent: "which title_filter entries contradict each other?"',
+    ]),
+  };
+}
+
 function onboardingState(root) {
   const autoCopied = [];
   const templates = [
@@ -937,7 +1202,7 @@ function onboardingState(root) {
     }
   }
   const missing = USER_LAYER_PREREQS
-    .filter(({ path }) => !prereqPresent(root, path))
+    .filter((prereq) => !prereqPresent(root, prereq))
     .map(({ path }) => path);
 
   const { cli: activeCli, source: cliSource, warning: cliWarning } = resolveActiveCli();
@@ -946,17 +1211,20 @@ function onboardingState(root) {
   // user-data layer and may point elsewhere under split-checkout installs.
   const mcpCheck = checkPlaywrightMcp(process.cwd(), activeCli);
   const unpersonalized = unpersonalizedFiles(root);
+  const titleFilterIssues = titleFilterConflicts(root);
   // Every other check in this function is data-layer and correctly uses this
   // function's own `root` parameter. The tracked-.bak check is the one
   // code-layer exception (#3867 finding 6) — it must read the module-level
   // codeRoot (the code checkout), which only differs from `root` when a real
   // split-checkout data root is in play and no --target was given.
   const bakCheck = checkTrackedBakFiles(codeRoot);
+  const skillCheck = checkSkillEntrypoints(codeRoot);
   const cvShape = checkCvShape(root);
   const warnings = [
     ...(cliWarning ? [cliWarning] : []),
     ...(mcpCheck?.warn ? [`${mcpCheck.label}\n→ ${[].concat(mcpCheck.fix || []).join('\n  ')}`] : []),
     ...(bakCheck.warn ? [`${bakCheck.label}\n→ ${[].concat(bakCheck.fix || []).join('\n  ')}`] : []),
+    ...(skillCheck.warn ? [`${skillCheck.label}\n→ ${[].concat(skillCheck.fix || []).join('\n  ')}`] : []),
     ...(cvShape?.warn ? [`${cvShape.label}\n→ ${[].concat(cvShape.fix || []).join('\n  ')}`] : []),
     ...unpersonalized.map((u) => `${u.path} ${u.reason} — ${u.impact}\n→ Personalize it from cv.md before running evaluations.`),
   ];
@@ -985,6 +1253,8 @@ function onboardingState(root) {
     // to be visible — surfaced as its own field the agent can branch on rather
     // than a string it has to pattern-match out of `warnings`.
     unpersonalized,
+    // Present only when it fired: a coherent title_filter adds no key.
+    ...(titleFilterIssues ? { titleFilterConflicts: titleFilterIssues } : {}),
     warnings,
     autoCopied,
     plugins,

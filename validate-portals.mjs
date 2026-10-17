@@ -7,6 +7,7 @@
  *   node validate-portals.mjs
  *   node validate-portals.mjs --file templates/portals.example.yml
  *   node validate-portals.mjs --self-test
+ *   node validate-portals.mjs --help
  */
 
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
@@ -14,7 +15,7 @@ import { join, dirname, resolve } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath, pathToFileURL } from 'url';
 import * as yaml from 'js-yaml';
-import { flagValue, hasFlag } from './lib/cli-flags.mjs';
+import { flagValue, hasFlag, validateFlags } from './lib/cli-flags.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { barePrefixDomainKeywords } from './title-keywords.mjs';
 
@@ -243,6 +244,22 @@ export async function validatePortalsConfig(config, { providerIds = new Set() } 
     }
   }
 
+  // The languages a posting is wanted in, best first. scan.mjs skips an entry
+  // it cannot read, so a malformed list would quietly fall back to the default
+  // version — the typo can only surface here.
+  if (config.preferred_languages !== undefined) {
+    const list = config.preferred_languages;
+    if (!Array.isArray(list) && typeof list !== 'string') {
+      add(errors, 'preferred_languages', 'preferred_languages must be a list of language codes (e.g. [en])');
+    } else {
+      (Array.isArray(list) ? list : [list]).forEach((entry, idx) => {
+        if (typeof entry !== 'string' || !entry.trim()) {
+          add(errors, `preferred_languages[${idx}]`, 'each preferred language must be a non-empty language code');
+        }
+      });
+    }
+  }
+
   // #3438. Per-field whitelists a target can gate on instead of title. Each
   // block has the same shape as title_filter and is compiled by the same
   // buildTitleFilter(), so it gets the same structural checks for the same
@@ -316,17 +333,21 @@ export async function validatePortalsConfig(config, { providerIds = new Set() } 
       validateKeywordList(config.content_filter.negative, 'content_filter.negative', errors);
       if (config.content_filter.by_title_keyword !== undefined) {
         if (!isObject(config.content_filter.by_title_keyword)) {
-          add(errors, 'content_filter.by_title_keyword', 'by_title_keyword must be an object keyed by title_filter.positive keyword');
+          add(errors, 'content_filter.by_title_keyword', 'by_title_keyword must be an object keyed by title_filter.positive (or title_filter_full.positive) keyword');
         } else {
+          // scan-ats-full matches titles against title_filter_full when it is
+          // set and scopes by_title_keyword by that match, so a key that only
+          // exists there is live config for the sweep, not dead config.
           const titlePositive = new Set(
-            (Array.isArray(config.title_filter?.positive) ? config.title_filter.positive : [])
+            [config.title_filter?.positive, config.title_filter_full?.positive]
+              .flatMap(list => (Array.isArray(list) ? list : []))
               .filter(k => typeof k === 'string')
               .map(k => k.trim().toLowerCase())
           );
           for (const [kw, rule] of Object.entries(config.content_filter.by_title_keyword)) {
             const path = `content_filter.by_title_keyword.${kw}`;
             if (!titlePositive.has(kw.trim().toLowerCase())) {
-              add(warnings, path, `"${kw}" does not match any title_filter.positive keyword and will never apply`);
+              add(warnings, path, `"${kw}" does not match any title_filter.positive or title_filter_full.positive keyword and will never apply`);
             }
             if (!isObject(rule)) {
               add(errors, path, 'must be an object with positive/negative keyword lists');
@@ -484,8 +505,30 @@ tracked_companies:
   }
 }
 
+const KNOWN_FLAGS = ['--file', '--self-test', '--help', '-h'];
+const VALUE_FLAGS = ['--file'];
+
+const USAGE = `Usage:
+  node validate-portals.mjs                                    # validate portals.yml in the data root
+  node validate-portals.mjs --file templates/portals.example.yml  # validate a specific portals file
+  node validate-portals.mjs --self-test                        # run the built-in fixture checks
+  node validate-portals.mjs --help                             # print this usage block and exit`;
+
 async function main() {
   const args = process.argv.slice(2);
+  // Before any file is read: an unrecognized flag exits 1, --help/-h prints
+  // USAGE and exits 0. Neither used to be checked at all (#4601) — only
+  // --self-test and --file were read, so `--fiel templates/portals.example.yml`
+  // validated the data root's own portals.yml and exited 0 with its counts.
+  // The path on the first output line was the only hint that the file the
+  // caller named was never opened.
+  // requireOperand: without it, `--file --self-test` reads --self-test as the
+  // file path (flagValue() returns args[idx + 1] unconditionally, with no check
+  // that it is not itself another flag), and a bare trailing --file reaches
+  // resolve('') — the current directory. Same shape, same fix as the sibling
+  // verify-portals.mjs (#4250/#4254).
+  validateFlags(args, KNOWN_FLAGS, USAGE, { valueFlags: VALUE_FLAGS, requireOperand: true });
+
   if (args.includes('--self-test')) {
     await runSelfTest();
     return;

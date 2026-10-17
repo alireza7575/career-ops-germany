@@ -20,6 +20,7 @@ import { isMainModule } from './lib/is-main-module.mjs';
 import { load as yamlLoad } from 'js-yaml';
 import { resolveColumns, parseTrackerRow, normalizeVia } from './tracker-parse.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
+import { loadCanonicalStates, resolveCanonicalStateId, foldStatusInput } from './tracker-utils.mjs';
 import { atsVendorOf } from './ats-vendor.mjs';
 import { flagValue, hasFlag, validateFlags } from './lib/cli-flags.mjs';
 import { localToday } from './lib/local-today.mjs';
@@ -95,33 +96,25 @@ const summaryMode = args.includes('--summary');
 let MIN_THRESHOLD = 5;
 let MIN_VENDOR_N = 8;
 
-// --- Status normalization (mirrors verify-pipeline.mjs) ---
-const ALIASES = {
-  'evaluada': 'evaluated', 'condicional': 'evaluated', 'hold': 'evaluated',
-  'evaluar': 'evaluated', 'verificar': 'evaluated',
-  'aplicado': 'applied', 'enviada': 'applied', 'aplicada': 'applied',
-  'applied': 'applied', 'sent': 'applied',
-  'respondido': 'responded',
-  'entrevista': 'interview',
-  'oferta': 'offer',
-  'rechazado': 'rejected', 'rechazada': 'rejected',
-  'contratado': 'hired', 'contratada': 'hired', 'accepted': 'hired', 'accept': 'hired',
-  'descartado': 'discarded', 'descartada': 'discarded',
-  'cerrada': 'discarded', 'cancelada': 'discarded',
-  'no aplicar': 'skip', 'no_aplicar': 'skip', 'monitor': 'skip', 'geo blocker': 'skip',
-};
+// --- Status normalization ---
+// Every alias comes from templates/states.yml, the single source of truth —
+// no table here. states.yml ships with the code, so it is read from the
+// script's own directory, never from the (overridable) data root.
+const CANONICAL_STATES = loadCanonicalStates(
+  join(dirname(fileURLToPath(import.meta.url)), 'templates', 'states.yml'));
 
 function normalizeStatus(raw) {
-  const clean = raw.replace(/\*\*/g, '').trim().toLowerCase()
-    .replace(/\s+\d{4}-\d{2}-\d{2}.*$/, '').trim();
-  return ALIASES[clean] || clean;
+  // An unrecognized status keeps its own folded text, so it still shows up
+  // under its own name in the funnel instead of vanishing.
+  return resolveCanonicalStateId(raw, CANONICAL_STATES)
+    ?? foldStatusInput(String(raw ?? '').replace(/\s+\d{4}-\d{2}-\d{2}.*$/, ''));
 }
 
 export function classifyOutcome(status) {
   const s = normalizeStatus(status);
   // 'hired' is the strongest positive outcome — a landed job. It must not fall
   // through to the 'pending' default, which would drag conversion rates down.
-  if (['hired', 'interview', 'offer', 'responded'].includes(s)) return 'positive';
+  if (['hired', 'interview', 'offer', 'responded', 'assessment'].includes(s)) return 'positive';
   // 'applied' is SENT, not answered: denominator only, never the numerator.
   // Mirrors ADVANCED_STATUSES, which already excludes it.
   if (s === 'applied') return 'awaiting';
@@ -282,16 +275,16 @@ export function knownAtsVendorOf(rawUrl) {
 // or the posting closed) proves neither a submission nor an answer — the same
 // set stats.mjs uses for its canonical funnel. Module-scoped so the self-test
 // can assert membership and the channel-yield pass and self-test share one set.
-const SUBMITTED_STATUSES = new Set(['applied', 'responded', 'interview', 'offer', 'hired', 'rejected']);
+const SUBMITTED_STATUSES = new Set(['applied', 'responded', 'assessment', 'interview', 'offer', 'hired', 'rejected']);
 
 // Statuses that count as "advanced past screening" — STRICTER than
 // outcome=='positive': a bare 'applied' (submitted, no reply yet) does NOT
 // count. 'hired' is the furthest advance of all.
-const ADVANCED_STATUSES = new Set(['responded', 'interview', 'offer', 'hired']);
+const ADVANCED_STATUSES = new Set(['responded', 'assessment', 'interview', 'offer', 'hired']);
 
 // Print order for the CONVERSION FUNNEL summary. A status absent here is
 // silently omitted from the printed funnel, so this must track states.yml.
-const FUNNEL_ORDER = ['evaluated', 'applied', 'responded', 'interview', 'offer', 'hired', 'rejected', 'discarded', 'skip'];
+const FUNNEL_ORDER = ['evaluated', 'applied', 'responded', 'assessment', 'interview', 'offer', 'hired', 'rejected', 'discarded', 'skip'];
 
 function normalizeList(value) {
   if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean);

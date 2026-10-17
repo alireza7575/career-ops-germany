@@ -492,31 +492,70 @@ export function dedupeAgainstPortals(matches, existingEntries) {
  */
 export function insertIntoTrackedCompanies(fileText, snippets) {
   if (!snippets.length) return fileText;
-  const block = snippets.join('');
+  let block = snippets.join('');
 
-  const header = fileText.match(/^tracked_companies:[ \t]*$/m);
+  // The header line as a user can legitimately write it: bare, with a trailing
+  // comment, or as an empty flow list (`tracked_companies: []`). The last two
+  // used to miss this match, so a SECOND `tracked_companies:` key was appended
+  // to the file, which no YAML parser accepts.
+  const header = fileText.match(/^tracked_companies:[ \t]*(?:\[[ \t]*\][ \t]*)?(?:#[^\n]*)?$/m);
   if (!header) {
     // No block at all — append a fresh one at EOF.
     const sep = fileText.endsWith('\n') ? '\n' : '\n\n';
     return `${fileText}${sep}tracked_companies:${block}`;
   }
 
+  // An empty flow list becomes the block form; its trailing comment stays.
+  const headerText = header[0].replace(/^(tracked_companies:)[ \t]*\[[ \t]*\]/, '$1');
   const headerEnd = header.index + header[0].length; // index of the newline after the header
   const rest = fileText.slice(headerEnd);
   // Find the block's end: the next top-level key (a line starting with a
   // non-space, non-# char and containing a colon). Comments and indented lines
   // stay in-block. `m` anchors ^ to line starts; the leading \n keeps us from
-  // matching the header line itself.
-  const boundary = rest.match(/\n[^\s#][^\n]*:/);
-  const insertAt = boundary ? headerEnd + boundary.index : fileText.length;
+  // matching the header line itself. A list item written at column 0 (`- name:`,
+  // valid YAML and what some YAML emitters produce) is part of the block, not a
+  // key, so a line that starts a sequence entry is never the boundary.
+  const boundary = rest.match(/\n(?!-(?:[ \t]|\r?\n|$))[^\s#][^\n]*:/);
+  const blockEnd = boundary ? headerEnd + boundary.index : fileText.length;
 
-  let before = fileText.slice(0, insertAt);
-  const after = fileText.slice(insertAt);
+  // Match the indentation of the entries already there: our snippets are
+  // indented for the template's two-space style, and a sequence whose entries
+  // sit at two different indents is not valid YAML.
+  const firstItem = fileText.slice(headerEnd, blockEnd).match(/\n([ ]*)-[ \t]/);
+  if (firstItem && firstItem[1].length !== 2) {
+    const shift = firstItem[1].length - 2;
+    block = block.replace(/^( *)(\S)/gm, (_m, spaces, ch) => (
+      shift > 0 ? `${' '.repeat(shift)}${spaces}${ch}` : `${spaces.slice(Math.min(-shift, spaces.length))}${ch}`
+    ));
+  }
+
+  let before = fileText.slice(0, header.index) + headerText + fileText.slice(headerEnd, blockEnd);
+  const after = fileText.slice(blockEnd);
   // Trim trailing blank lines that belong to the block so our leading-newline
   // snippets don't stack extra blank lines before the next key.
-  before = before.replace(/\n[ \t]*(?=\n*$)/g, (m2, off) => (off >= headerEnd ? '\n' : m2));
+  const bodyStart = header.index + headerText.length;
+  before = before.replace(/\n[ \t]*(?=\n*$)/g, (m2, off) => (off >= bodyStart ? '\n' : m2));
 
   return before + block + after;
+}
+
+/**
+ * Whether a spliced portals.yml text still parses and carries exactly the
+ * expected number of tracked_companies entries. The text splice above works on
+ * lines, not on the YAML, so --write checks its own output before replacing the
+ * user's file.
+ *
+ * @param {string} text
+ * @param {number} expectedCount
+ * @returns {boolean}
+ */
+export function splicedCorrectly(text, expectedCount) {
+  try {
+    const doc = yaml.load(text);
+    return Array.isArray(doc?.tracked_companies) && doc.tracked_companies.length === expectedCount;
+  } catch {
+    return false;
+  }
 }
 
 // ── Network functions (separated from pure logic, like vc-portfolios.mjs) ──
@@ -1149,12 +1188,20 @@ async function main() {
   let written = false;
   if (opts.write && fresh.length && existsSync(PORTALS_PATH)) {
     const current = readFileSync(PORTALS_PATH, 'utf-8');
-    // Write-to-temp-then-rename: atomic on the same filesystem, so a crash
-    // mid-write can't leave the user's portals.yml truncated.
-    const tmpPath = `${PORTALS_PATH}.tmp-${process.pid}`;
-    writeFileSync(tmpPath, insertIntoTrackedCompanies(current, snippets), 'utf-8');
-    renameSyncWithRetry(tmpPath, PORTALS_PATH);
-    written = true;
+    const next = insertIntoTrackedCompanies(current, snippets);
+    if (splicedCorrectly(next, existingEntries.length + fresh.length)) {
+      // Write-to-temp-then-rename: atomic on the same filesystem, so a crash
+      // mid-write can't leave the user's portals.yml truncated.
+      const tmpPath = `${PORTALS_PATH}.tmp-${process.pid}`;
+      writeFileSync(tmpPath, next, 'utf-8');
+      renameSyncWithRetry(tmpPath, PORTALS_PATH);
+      written = true;
+    } else {
+      // A text splice cannot cover every way tracked_companies can be written.
+      // Rather than leave a portals.yml the scanner cannot parse, keep the file
+      // as it is and print the entries for the user to paste.
+      warnings.push(`--write skipped — splicing into ${PORTALS_PATH} would not leave it as valid YAML with ${existingEntries.length + fresh.length} tracked_companies entries; the file is unchanged and the entries are shown in pendingEntries to add by hand`);
+    }
   } else if (opts.write && fresh.length && !existsSync(PORTALS_PATH)) {
     warnings.push(`--write given but portals.yml not found at ${PORTALS_PATH} — printing entries instead`);
   } else if (!opts.write && fresh.length) {

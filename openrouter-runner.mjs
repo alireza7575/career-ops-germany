@@ -112,6 +112,7 @@ if (blacklistedModels.size > 0) {
   console.log(`[blacklist] Loaded ${blacklistedModels.size} pre-blacklisted model(s) from disk.`);
 }
 // 429 failure count per model — auto-blacklist after 3 consecutive 429s
+// (a success or any other failure resets the count)
 const rateLimitCounts = {};
 
 // ---------------------------------------------------------------------------
@@ -182,9 +183,21 @@ async function cmdModels() {
 // env and no .career-ops-data marker, getCareerOpsRoot() returns the same
 // directory __dirname did.
 const DATA_ROOT = getCareerOpsRoot();
+// System-layer files ship with the code and never follow the data root: a data
+// root outside the checkout holds cv.md and modes/_profile.md, but no
+// modes/_shared.md or modes/oferta.md. Read through readFile() those came back
+// null, fell through to '', and the evaluation ran on a system prompt with no
+// shared rules and no evaluation mode (#5115). Same split as ollama-eval.mjs
+// and gemini-eval.mjs.
+const CODE_ROOT = __dirname;
 
 function readFile(relPath) {
   try { return fs.readFileSync(path.join(DATA_ROOT, relPath), 'utf-8'); }
+  catch { return null; }
+}
+
+function readSystemFile(relPath) {
+  try { return fs.readFileSync(path.join(CODE_ROOT, relPath), 'utf-8'); }
   catch { return null; }
 }
 
@@ -338,6 +351,7 @@ async function callOpenRouter(systemPrompt, userMessage) {
       const usage = normalizeOpenAIUsage(data.usage);
 
       modelIndex = (modelIndex + attempt + 1) % active.length;
+      delete rateLimitCounts[model];
       console.log('OK');
       return { content, usage };
 
@@ -363,6 +377,7 @@ async function callOpenRouter(systemPrompt, userMessage) {
           await new Promise(r => setTimeout(r, 800));
         }
       } else {
+        delete rateLimitCounts[model];
         console.log(`FAILED (${msg})`);
         await new Promise(r => setTimeout(r, 800));
       }
@@ -372,6 +387,10 @@ async function callOpenRouter(systemPrompt, userMessage) {
   throw new Error(`All ${active.length} active models failed. Last error: ${lastError?.message}`);
 }
 
+// Exported so tests/openrouter-runner-429-reset.test.mjs can script fetch()
+// against the real rotation and blacklist logic without a network or a CLI run.
+export { callOpenRouter, rateLimitCounts, blacklistedModels };
+
 // ---------------------------------------------------------------------------
 // Context loading
 // ---------------------------------------------------------------------------
@@ -379,7 +398,7 @@ function loadContext() {
   return {
     cv:          readFile('cv.md')               ?? 'CV not found.',
     profile:     readFile('config/profile.yml')  ?? '',
-    shared:      readFile('modes/_shared.md')    ?? '',
+    shared:      readSystemFile('modes/_shared.md') ?? '',
     profileMode: readFile('modes/_profile.md')   ?? '',
   };
 }
@@ -652,7 +671,7 @@ async function cmdScan() {
 async function cmdEvaluate(input, ctx) {
   tracker.recordZeroToken('scan');
   tracker.recordZeroToken('pdf payload');
-  const modeContent = readFile('modes/oferta.md') ?? readFile('modes/auto-pipeline.md') ?? '';
+  const modeContent = readSystemFile('modes/oferta.md') ?? readSystemFile('modes/auto-pipeline.md') ?? '';
 
   let jdText = input;
 
@@ -799,7 +818,7 @@ async function cmdApply(ref, ctx) {
   tracker.recordZeroToken('scan');
   tracker.recordZeroToken('evaluation');
   tracker.recordZeroToken('pdf payload');
-  const modeContent = readFile('modes/apply.md') ?? '';
+  const modeContent = readSystemFile('modes/apply.md') ?? '';
 
   let reportContent;
   if (fileExists(ref)) {

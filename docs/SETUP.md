@@ -122,6 +122,8 @@ PDFs are rendered with a headless Chromium. Install it once per machine:
 npx playwright install chromium
 ```
 
+On NixOS, skip this step: the browsers it downloads can't run there. Use the flake dev shell instead, as described in [NIXOS.md](NIXOS.md).
+
 ## Available Commands
 
 | Action | How |

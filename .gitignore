@@ -267,3 +267,56 @@ data/agent-inbox.md
 # Ignore environment variants while keeping the public template.
 .env.*
 !.env.example
+
+# Added by career-ops update-system.mjs.
+# System-owned ignore rules that were missing from this file. Your own rules
+# are never modified, reordered or removed: the updater only appends patterns
+# it cannot already find somewhere in this file. Reordering these lines, or
+# moving them elsewhere in the file, is safe and will not bring them back.
+# Deleting or commenting one out is not: they are system-owned, several of
+# them guard files holding personal data, and the next update re-adds any
+# that is no longer present as a live pattern.
+!/data/
+!data/.gitkeep
+!data/offers/
+!data/parser-output/
+!data/offers/.gitkeep
+!data/parser-output/**/
+!data/parser-output/.gitkeep
+!data/parser-output/**/.gitkeep
+!reports/.gitkeep
+!/output/
+!output/.gitkeep
+!batch/README.md
+!batch/aggregate-tokens.mjs
+!batch/batch-prompt.md
+!batch/batch-runner.sh
+!batch/logs
+!batch/tracker-additions
+!batch/logs/.gitkeep
+!batch/tracker-additions/.gitkeep
+!/jds/
+!jds/.gitkeep
+!/interview-prep/
+!interview-prep/.gitkeep
+!interview-prep/sessions/
+!interview-prep/sessions/.gitkeep
+!interview-prep/sessions/README.md
+!writing-samples/README.md
+!web/package-lock.json
+!test-fixtures/**
+!/documents/
+!documents/.gitkeep
+!documents/README.md
+# Older installs keep unanchored scaffold negations because reconcileGitignore()
+# only appends rules. Re-ignore matching user-layer folders under data/ after
+# those legacy patterns so personal files stay out of git status and commits.
+data/jds/
+data/output/
+data/documents/
+data/interview-prep/
+# Repo-local LaTeX engine placed by install-latex-engine.mjs (.part is its staging copy)
+/tectonic
+/tectonic.exe
+/tectonic.part
+/tectonic.part.exe

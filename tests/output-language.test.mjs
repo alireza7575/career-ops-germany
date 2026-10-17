@@ -8,6 +8,7 @@ import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, existsSync } from 
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pass, fail, ROOT, NODE, rmSync } from './helpers.mjs';
+import { SCRATCH_PREFIX } from '../lib/scratch-dirs.mjs';
 import {
   outputLanguageInstruction,
   parseOutputLanguage,
@@ -89,7 +90,7 @@ check(
 // through console.warn (stderr). Use its deterministic --context-only seam so
 // these tests never contact Gemini (CodeRabbit, PR #3798).
 function runGeminiEval(modesDirYaml) {
-  const tmp = mkdtempSync(join(ROOT, 'co-modes-dir-'));
+  const tmp = mkdtempSync(join(ROOT, `${SCRATCH_PREFIX}co-modes-dir-`));
   try {
     const configDir = join(tmp, 'config');
     mkdirSync(configDir, { recursive: true });

@@ -26,6 +26,7 @@ import { extractTrackerReportNumbers, resolveColumns, parseTrackerRow } from './
 import { rebuildRow, resolveTrackerPath, resolvePdfIndexPath, openTrackerTransaction, writeFileAtomic, resolveWorkspaceRoot, pathIsInsideCanonical } from './tracker-utils.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
+import { parsePdfIndex, livePdfIndex } from './find.mjs';
 
 const USAGE = 'Usage: node sync-pdf-flags.mjs [--dry-run] [--json]\n       node sync-pdf-flags.mjs --prune [--write] [--json]';
 
@@ -43,6 +44,9 @@ const USAGE = 'Usage: node sync-pdf-flags.mjs [--dry-run] [--json]\n       node 
  * @param {object} options
  * @param {string} options.appsFile - Tracker to reconcile (canonical path).
  * @param {string} options.pdfManifest - PDF manifest (data/pdf-index.tsv).
+ * @param {string} [options.dataRoot] - Root the manifest's PDF paths resolve
+ *   against, as generate-pdf.mjs writes them (#3169). Defaults to the
+ *   tracker's workspace, the same default merge-tracker.mjs uses.
  * @param {{dryRun?: boolean, json?: boolean, prune?: boolean, write?: boolean}} [options.flags]
  * @param {string} [options.lockDir] - Tracker lock; defaults to the one derived from appsFile.
  * @param {{timeoutMs?: number, retryMs?: number, staleMs?: number}} [options.lock] - Lock timing.
@@ -57,6 +61,7 @@ export async function syncTrackerPdfFlags(options = {}) {
   const console = logger;
   const APPS_FILE = appsFile;
   const PDF_MANIFEST = pdfManifest;
+  const DATA_ROOT = options.dataRoot ?? resolveWorkspaceRoot(APPS_FILE);
   const flags = { dryRun: false, json: false, prune: false, write: false, ...options.flags };
   // Only the lock settings the caller actually gave: an explicit `undefined`
   // would override openTrackerTransaction's own env-derived defaults.
@@ -192,14 +197,11 @@ export async function syncTrackerPdfFlags(options = {}) {
       }
       return 2;
     }
-    for (const line of content.split('\n')) {
-      if (!line.trim() || line.startsWith('#')) continue;
-      const parts = line.split('\t');
-      const reportVal = parts[0]?.trim();
-      if (reportVal && /^\d+$/.test(reportVal)) {
-        const norm = parseInt(reportVal, 10);
-        if (norm > 0) manifestReports.add(norm);
-      }
+    // A manifest row only means PDF-ready when a CV PDF it names is still on
+    // disk. merge-tracker.mjs asks the same question the same way (#4777).
+    const live = livePdfIndex(parsePdfIndex(content), DATA_ROOT, (message) => console.warn(`⚠️  ${message}`));
+    for (const report of live.keys()) {
+      if (/^\d+$/.test(report) && Number(report) > 0) manifestReports.add(Number(report));
     }
   }
 
@@ -288,13 +290,14 @@ export async function syncTrackerPdfFlags(options = {}) {
 }
 
 if (isMainModule(import.meta.url)) {
-  const flags = { dryRun: false, json: false, prune: false, write: false };
+  const flags = { dryRun: false, json: false, prune: false, write: false, help: false };
   const unknownOptions = [];
   for (const arg of process.argv.slice(2)) {
     if (arg === '--dry-run') flags.dryRun = true;
     else if (arg === '--json') flags.json = true;
     else if (arg === '--prune') flags.prune = true;
     else if (arg === '--write') flags.write = true;
+    else if (arg === '--help' || arg === '-h') flags.help = true;
     else unknownOptions.push(arg);
   }
 
@@ -308,7 +311,13 @@ if (isMainModule(import.meta.url)) {
   // --dry-run must win over --write
   if (flags.dryRun) flags.write = false;
 
-  if (unknownOptions.length > 0) {
+  // Before the unknown-option branch: --help landed in unknownOptions, so
+  // asking what the flags are exited 1 with an error about the flag you asked
+  // about. It is also before the --write/--prune check, which is a usage
+  // diagnostic and not what was asked for.
+  if (flags.help) {
+    console.log(USAGE);
+  } else if (unknownOptions.length > 0) {
     const error = `unknown option(s): ${unknownOptions.join(', ')}`;
     if (flags.json) console.error(JSON.stringify({ error, code: 'unknown-option' }));
     else console.error(`Error: ${error}\n${USAGE}`);
@@ -323,6 +332,7 @@ if (isMainModule(import.meta.url)) {
       // Derived from the TRACKER, not from this script's location, so a redirected
       // CAREER_OPS_TRACKER moves the whole workspace together (#2471).
       pdfManifest: resolvePdfIndexPath(appsFile),
+      dataRoot: DATA_ROOT,
       flags,
     });
   }

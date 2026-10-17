@@ -45,12 +45,73 @@ const TOOL_PROSE_WORDS = new Set([
   'improving', 'in', 'of', 'on', 'on-time', 'operations', 'production', 'project',
   'recurring', 'resolving', 'submission', 'team', 'the', 'to', 'using', 'with',
 ]);
+// Words that are prose only when they are the whole fragment, in any case.
+// "not just using AI, building for it" leaves "building" alone after the
+// split, and it starts the next clause (#4394). It cannot join
+// TOOL_PROSE_WORDS, which drops an unshaped fragment when any of its words is
+// listed: "using SQL, building Looker models" would then lose Looker
+// unchecked. isLikelyTool checks this set before the shape and source checks,
+// because a capital letter does not make the bare word a name.
+// The pronoun "I" is capitalised, so it is tool-shaped; in "using Java so I
+// could ship weekly" it is the one name-shaped word after Java.
+const PROSE_FRAGMENTS = new Set(['building', 'i']);
 // A leading determiner marks ordinary reference, not a product list: "using
 // that campaign", "using our playbook". The class is closed, so unlike
 // TOOL_PROSE_WORDS it cannot turn into a list that grows by one word per bug
 // report (#4004).
 const DETERMINER_LEAD_RE = /^(?:the|that|this|these|those|our|your|their|its|his|her|my)(?:\s+|$)/i;
+// "a" or "an" before a word opens a noun phrase, and it is a name only inside
+// the phrase: "a Kubernetes cluster" claims Kubernetes, not the cluster. Unlike
+// the determiners above it does not mark the clause as prose, because "using
+// React and an ASP.NET backend" is a list whose second item opens with one.
+const ARTICLE_LEAD_RE = /^an?\s+/i;
+// The ending a name takes from the phrase around it, not from itself: a
+// possessive ("Elasticsearch's index") and a lowercase hyphenated suffix
+// ("Kubernetes-based"). A version or a capital after the hyphen ("GPT-4",
+// "T-Mobile") is part of the name. A single letter before the suffix
+// ("C-suite", "E-commerce", "X-ray") is the start of an ordinary word, so the
+// word is not a name at all.
+const POSSESSIVE_SUFFIX_RE = /['\u2019]s$/i;
+const LOWERCASE_SEGMENT_RE = /^\p{Ll}+$/u;
 const DECLARED_TOOL_TRIGGER_RE = /^(?:technologies?|tech stack)\s*:/i;
+// What separates the names in a tool list. Beside the comma (Arabic and
+// ideographic ones too) and the three connector words: a double quote, a
+// backtick, a pipe, a bullet, a dash or an arrow, none of which occurs inside
+// a name, so two names joined by a dash with no spaces are still two names.
+// Any other symbol separates names only when it stands alone between spaces
+// ("Java & Kubernetes"), because "AT&T", "C++" and "CI/CD" carry one inside.
+// A connector joined by a hyphen is part of a word ("in-house", "built-in"),
+// not a separator.
+const TOOL_LIST_SEPARATOR_RE = /[,\u060c\u3001]|(?<!-)\b(?:and|with|in)\b(?!-)|["\u201c\u201d\u201e\u201a\u00ab\u00bb\u2039\u203a\u0060|\u2022\u00b7\u2013\u2014\u2190\u2192]|(?<=^|\s)[^\p{L}\p{N}\s]+(?=\s|$)/iu;
+// Where a list item ends without the list ending: a bracket, or a colon, "!"
+// or "?" before a space. An ideographic full stop and an Arabic semicolon take
+// no space after them; they end the sentence the way "!" and "?" do.
+// `toolFragments` reads the piece beside one differently from an ordinary item.
+const TOOL_SENTENCE_END_RE = /[!?\u3002\u061b]/;
+const TOOL_BOUNDARY_RE = /([([{)\]}]|[:!?](?=\s|$)|[\u3002\u061b])/;
+// The articles and prepositions in TOOL_PROSE_WORDS that can sit inside a
+// list item. They join names as readily as they join prose ("Kubernetes on
+// AWS"), so on their own they do not make an item prose; see
+// `toolNameBeforeConnector`. "and", "with" and "in" are left out because the
+// list is split on them. "for" is left out because a capture ends at a "for"
+// after a space, and an item that still starts with one ("Kafka,for
+// analytics") is prose. A closed class, like the determiners above.
+const TOOL_PROSE_CONNECTORS = new Set(['a', 'an', 'at', 'by', 'from', 'of', 'on', 'the', 'to']);
+// "Worked with" takes a team or a person as often as a tool ("worked with
+// Finance on pricing"), so `toolNameBeforeConnector` is not applied to a list
+// it opens. Tested against the start of the match, which is the trigger.
+const WORKED_WITH_RE = /^worked with\b/i;
+// "using" opening a later list item: "using React, using Kubernetes". The
+// other prose triggers end in "with", which the list is split on, so they
+// never open an item.
+const INNER_TOOL_TRIGGER_RE = /^\s*using\s+/i;
+// A name with a dot inside it: "Node.js", "ASP.NET", ".NET". Every part between
+// dots has two or more characters, so an abbreviation ("U.S.", "e.g.") is not
+// one. `isDottedName` also wants a letter in the first and the last part, so a
+// version ("22.04", "v18.17") or a figure with a unit ("12.5M", "99.9ms") is
+// not one either.
+const DOTTED_NAME_RE = /^(?:\.[\p{L}\p{N}]{2,}|[\p{L}\p{N}][\p{L}\p{N}+#-]+(?:\.[\p{L}\p{N}][\p{L}\p{N}+#-]+)+)$/u;
+const LETTER_RE = /\p{L}/u;
 const TOOL_PHRASE_PATTERN = /^(?=.{1,80}$)[\p{L}\p{N}.][\p{L}\p{N}+#./-]*(?:\s+[\p{L}\p{N}.][\p{L}\p{N}+#./-]*){0,2}$/u;
 const DELEGATED_PARTY_RE = /\b(?:vendors?|agenc(?:y|ies)|contractors?|consultanc(?:y|ies)|consultants?|external teams?|outsourc(?:ed|ing)|implementation partners?)\b/i;
 const DELEGATION_RE = /\b(?:commissioned|coordinated|directed|engaged|hired|managed|oversaw|partnered with|supervised)\b/i;
@@ -98,6 +159,22 @@ const METRIC_NOUNS = [
   'graduates', 'alumni', 'teachers', 'instructors', 'educators', 'faculty',
   'schools', 'districts', 'campuses', 'classrooms', 'programs', 'programmes',
   'workshops', 'assessments', 'exams',
+  // German (language.output: de / modes/de). Without these a German CV or cover
+  // letter produced no count claim at all and only got the coverage warning,
+  // so "45 Mitarbeiter" against a source saying 20 passed unchecked. Inflected
+  // forms are listed explicitly (no stemming) and folded to the English
+  // canonical noun in NOUN_SYNONYMS, so a German document checks against an
+  // English or German source alike. German TIME nouns (Tage, Jahre, ...) are
+  // deliberately left out: sources state durations as table cells ("Day
+  // Streak | 316") far more often than as "316 Tage", so adding them would fail
+  // truthful documents without catching the inflation class this gate targets.
+  'mitarbeiter', 'mitarbeitende', 'mitarbeitenden', 'kunden', 'projekte',
+  'projekten', 'standorte', 'standorten', 'zertifikate', 'zertifikaten',
+  'blogbeiträge', 'blogbeiträgen', 'beiträge', 'beiträgen', 'posts',
+  'werkzeuge', 'werkzeugen',
+  'mitarbeitern', 'mitarbeiterinnen', 'teammitglieder', 'teammitgliedern',
+  'nutzer', 'nutzern', 'entwickler', 'entwicklern', 'entwicklerinnen',
+  'ingenieure', 'ingenieuren', 'ingenieurinnen',
 ];
 // How many words may sit between a number and the noun it counts. The same
 // regex parses the generated CV and the sources, so the window is symmetric by
@@ -174,8 +251,14 @@ const COUNT_CLAIM_RE = new RegExp(
   // "ERC-4626 vaults" one of 4626 vaults. Without the lookbehind, a tailored
   // bullet that drops a word the source had inside the modifier window (so
   // the source yields no claim and the bullet does) fails the gate.
-  String.raw`(?<![A-Za-z]-)\b(\d[\d,.]*(?:[kKmMbB]\b|\s+(?:${SPELLED_MAGNITUDE_ALT})\b)?)\s*\+?\s*(?:[A-Za-z][A-Za-z-]*\s+){0,${MODIFIER_WINDOW}}?(${METRIC_NOUNS.join('|')})\b`,
-  'gi'
+  //
+  // Modifiers are any letters (\p{L}), not ASCII only, so German, French and
+  // Spanish modifiers with diacritics ("veröffentlichte") no longer end the
+  // window. `(?:[\p{L}\p{N}]+-)*` lets the counted noun close a hyphenated
+  // compound ("318 TryHackMe-Rooms"): German writes the modifier and the noun
+  // as one hyphenated token, which a whitespace-only window never saw.
+  String.raw`(?<![A-Za-z]-)\b(\d[\d,.]*(?:[kKmMbB]\b|\s+(?:${SPELLED_MAGNITUDE_ALT})\b)?)\s*\+?\s*(?:\p{L}[\p{L}\p{M}-]*\s+){0,${MODIFIER_WINDOW}}?(?:[\p{L}\p{N}]+-)*(${METRIC_NOUNS.join('|')})(?![\p{L}\p{N}])`,
+  'giu'
 );
 const NOUN_SYNONYMS = new Map([
   ['repos', 'repositories'],
@@ -188,6 +271,35 @@ const NOUN_SYNONYMS = new Map([
   // restating a source's "20 staff" is a paraphrase, not a fabrication.
   ['personnel', 'staff'],
   ['labs', 'laboratories'],
+  // German forms fold to the English canonical noun (see METRIC_NOUNS).
+  ['mitarbeiter', 'employees'],
+  ['mitarbeitern', 'employees'],
+  ['mitarbeiterinnen', 'employees'],
+  ['mitarbeitende', 'employees'],
+  ['mitarbeitenden', 'employees'],
+  ['teammitglieder', 'employees'],
+  ['teammitgliedern', 'employees'],
+  ['kunden', 'customers'],
+  ['nutzer', 'users'],
+  ['nutzern', 'users'],
+  ['entwickler', 'engineers'],
+  ['entwicklern', 'engineers'],
+  ['entwicklerinnen', 'engineers'],
+  ['ingenieure', 'engineers'],
+  ['ingenieuren', 'engineers'],
+  ['ingenieurinnen', 'engineers'],
+  ['projekte', 'projects'],
+  ['projekten', 'projects'],
+  ['standorte', 'locations'],
+  ['standorten', 'locations'],
+  ['zertifikate', 'certifications'],
+  ['zertifikaten', 'certifications'],
+  ['blogbeiträge', 'posts'],
+  ['blogbeiträgen', 'posts'],
+  ['beiträge', 'posts'],
+  ['beiträgen', 'posts'],
+  ['werkzeuge', 'tools'],
+  ['werkzeugen', 'tools'],
 ]);
 const SIMPLE_CLAIM_PATTERNS = [
   /\b\d+(?:\.\d+)?\s?%/g,
@@ -263,9 +375,50 @@ export function foldDigits(text) {
   return out.replace(/(?<!\d)(\d{1,3})[\s\u00a0\u202f](?=\d{3}(?!\d))/g, '$1');
 }
 
+const HTML_ENTITY_RE = /&(?:#(\d{1,7})|#x([\da-f]{1,6})|([a-z]{2,31}));/gi;
+const HTML_NAMED_ENTITIES = new Map([
+  ['amp', '&'], ['lt', '<'], ['gt', '>'], ['nbsp', ' '], ['quot', '"'], ['apos', "'"],
+  ['lsquo', '\u2018'], ['rsquo', '\u2019'], ['sbquo', '\u201a'], ['ldquo', '\u201c'],
+  ['rdquo', '\u201d'], ['bdquo', '\u201e'], ['laquo', '\u00ab'], ['raquo', '\u00bb'],
+  ['ndash', '\u2013'], ['mdash', '\u2014'], ['hellip', '\u2026'], ['bull', '\u2022'],
+  ['middot', '\u00b7'], ['reg', '\u00ae'], ['trade', '\u2122'], ['copy', '\u00a9'],
+  ['shy', '\u00ad'], ['zwnj', '\u200c'], ['zwj', '\u200d'], ['zerowidthspace', '\u200b'],
+]);
+// Decoded only after tags are stripped, so escaped markup stays text and an
+// escaped "&" cannot join what follows it into another entity.
+const MARKUP_ENTITY_CHARACTERS = new Set(['&', '<', '>', ' ']);
+
+/**
+ * The character an HTML entity encodes. A control character renders as white
+ * space at most, so it decodes to a space. An unknown entity, and one outside
+ * the pass asked for (`markup` decodes only `MARKUP_ENTITY_CHARACTERS`, the
+ * other pass everything else), is returned unchanged.
+ */
+function decodeHtmlEntity(entity, decimal, hex, name, markup) {
+  const codePoint = decimal ? Number(decimal) : hex ? Number.parseInt(hex, 16) : null;
+  const char = codePoint === null
+    ? HTML_NAMED_ENTITIES.get(name.toLowerCase())
+    : codePoint < 0x20 ? ' ' : (codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : undefined);
+  if (char === undefined || MARKUP_ENTITY_CHARACTERS.has(char) !== markup) return entity;
+  return char;
+}
+
 /** Remove HTML, basic LaTeX commands, and excess whitespace from document text. */
 export function stripMarkup(text, { keepLineBreaks = false } = {}) {
-  return foldDigits(String(text))
+  // An entity is the character it encodes, and a default-ignorable character
+  // (zero-width space, joiner, soft hyphen, directional mark, variation
+  // selector) renders as nothing. Both are resolved before anything else reads
+  // the text, digit grouping included, so every claim pattern sees what the
+  // reader sees. Left in, either one split a word: "Kuber&shy;netes", or the
+  // same word with a zero-width space inside, was never compared with the
+  // sources, and an entity's ";" ended a tool list.
+  const visible = String(text)
+    .replace(HTML_ENTITY_RE, (entity, decimal, hex, name) => decodeHtmlEntity(entity, decimal, hex, name, false))
+    .replace(/\p{Default_Ignorable_Code_Point}/gu, '')
+    // A trademark sign is not part of the name it marks. Left in, it joined
+    // the name inside a clause, and normalization turns "\u2122" into "TM".
+    .replace(/[\u00ae\u2120\u2122]/g, '');
+  return foldDigits(visible)
     .replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi, ' ')
     .replace(/<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>/gi, ' ')
     // Only strip things that actually look like tags: `<name …>` or `</name>`.
@@ -313,8 +466,7 @@ export function stripMarkup(text, { keepLineBreaks = false } = {}) {
     .replace(/\*\*(\S(?:[\s\S]*?\S)?)\*\*/g, ' $1 ')
     .replace(/__(\S(?:[\s\S]*?\S)?)__/g, ' $1 ')
     .replace(/\*(\S(?:[^\n*]*\S)?)\*/g, ' $1 ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
+    .replace(HTML_ENTITY_RE, (entity, decimal, hex, name) => decodeHtmlEntity(entity, decimal, hex, name, true))
     // keepLineBreaks preserves a newline as a CLAUSE boundary for the plan-horizon
     // scan. Horizontal whitespace still collapses, and every claim pattern spans a
     // newline through `\s`, so extraction is unaffected either way.
@@ -369,15 +521,17 @@ function looksToolShaped(rawValue) {
   // A digit anywhere marks a version or a name built on one: "n8n", "GPT-4",
   // "Python 3.11".
   if (/\d/.test(trimmed)) return true;
-  // Every word capitalised: "React", "Google Cloud", "Node.js". A single
-  // lowercase connector inside an otherwise-capitalised phrase never reaches
-  // here — TOOL_PHRASE_PATTERN caps a tool fragment at 3 words and the
-  // surrounding split on `and`/`with`/`in` already removes connectors.
+  // Every word capitalised: "React", "Google Cloud", "Node.js". A lowercase
+  // connector inside a capitalised phrase ("Kubernetes on AWS") makes it not
+  // tool-shaped, which leaves it to the prose-word check in isLikelyTool.
   return trimmed.split(/\s+/).every(word => /^[\p{Lu}]/u.test(word));
 }
 
 /**
  * Keep likely technology names while dropping ordinary prose fragments.
+ *
+ * A fragment that is exactly a `PROSE_FRAGMENTS` word, in any case, is
+ * rejected first, before the shape and source checks below.
  *
  * A fragment that does not look tool-shaped (see `looksToolShaped`) is kept
  * anyway when it is already an exact substring of the source files: a real
@@ -392,15 +546,25 @@ function looksToolShaped(rawValue) {
  *
  * Anything left is retained by default, preserving that fail-closed behavior
  * for lowercase names. Only exact words observed as prose false positives are
- * rejected through `TOOL_PROSE_WORDS`; morphological suffixes are deliberately
- * not used because real products such as Spring, Unity, and Processing share
- * them.
+ * rejected here, through `TOOL_PROSE_WORDS`; morphological suffixes are
+ * deliberately not used because real products such as Spring, Unity, and
+ * Processing share them.
+ *
+ * Neither length nor punctuation rejects a fragment. A fragment of more than
+ * three words, or one holding a character outside letters, digits and
+ * "+#./-", used to be dropped here before any check, so "Google Cloud Vertex
+ * AI" or "AT&T Cloud" was never compared with the sources and a fabricated
+ * one passed the gate. Dropping is the fail-open direction. `toolFragments`
+ * now strips the punctuation around a name and reads a long fragment by its
+ * names, and what reaches this function goes through the checks above.
  */
 function isLikelyTool(value, sourceNormalized) {
   const normalized = normalizeFact(value);
   const words = normalized.split(' ');
-  if (!normalized || words.length > 3) return false;
-  if (!TOOL_PHRASE_PATTERN.test(value.trim())) return false;
+  if (!normalized) return false;
+  // Before the shape and source checks: the whole fragment is the prose word,
+  // so a title-cased "Building" is no more a name than "building" is.
+  if (PROSE_FRAGMENTS.has(normalized)) return false;
   if (looksToolShaped(value)) return true;
   if (sourceNormalized != null && sourceContainsFact(sourceNormalized, normalized)) return true;
   // Every word of the fragment already occurs in the source: this is the
@@ -410,6 +574,206 @@ function isLikelyTool(value, sourceNormalized) {
   // TOOL_PROSE_WORDS (#4004).
   if (sourceNormalized != null && words.every(word => sourceContainsFact(sourceNormalized, word))) return false;
   return !words.some(word => TOOL_PROSE_WORDS.has(word));
+}
+
+// A word that is a quantity rather than a name: one with no letter ("30",
+// "70:20:10"), or a number with a unit of at most two letters ("3x", "12M",
+// "99.9ms", "40%").
+const QUANTITY_WORD_RE = /^(?:\P{L}*|\d[\d.,]*\p{L}{0,2}%?)$/u;
+// What the same test accepts as a measure when a digit-led word may be a name.
+// A measure is a number alone, or a number with one suffix letter from k, m, b
+// or x in either case: the suffixes the metric patterns read on a number
+// ("50k users", "1.5M users", "10x"). Any other letters make the word a name,
+// lowercase or not: "3CX", "4d", "3cx", "4me" and "12MB". The suffix cannot
+// tell a product from a unit, so "4K" and "3M" read as measures.
+const MEASURE_WORD_RE = /^(?:\P{L}*|\d[\d.,]*[kKmMbBxX]?)$/u;
+// A word of single letters joined by dots or slashes: "U.S.", "A/B", "I/O".
+const ABBREVIATION_WORD_RE = /^\p{L}(?:[./]\p{L})+\.?$/u;
+
+/**
+ * The runs of consecutive tool-shaped words in a fragment: "Salesforce" in
+ * "Salesforce across three regions". A word with a capital after a lowercase
+ * letter counts ("iOS", "macOS"), and so does a dotted name (".NET"). A
+ * quantity or an abbreviation names nothing, so it ends a run and is left
+ * out: "CAC 30%" checks CAC, and "A/B" checks nothing. A word joined by a
+ * slash to a dotted name is two names, so "Node.js/Express" checks both.
+ * `skipLoneLetter` drops a run of one letter, which is what a capture that
+ * stopped at the dot in "U.S." leaves behind. `digitNames` reads a digit-led
+ * word as a name unless it is a measure (`MEASURE_WORD_RE`), where the
+ * default also drops any word with one or two letters after its digits.
+ */
+function toolNameRuns(fragment, { skipLoneLetter = false, digitNames = false } = {}) {
+  const quantity = digitNames ? MEASURE_WORD_RE : QUANTITY_WORD_RE;
+  const runs = [];
+  let run = [];
+  const flush = () => {
+    if (run.length) runs.push(run.join(' '));
+    run = [];
+  };
+  for (const word of fragment.split(/\s+/)) {
+    const parts = word.includes('/') && word.split('/').some(isDottedName) ? word.split('/') : [word];
+    parts.forEach((part, index) => {
+      if (index > 0) flush();
+      const named = looksToolShaped(part) || /\p{Ll}\p{Lu}/u.test(part) || isDottedName(part);
+      if (named && !quantity.test(part) && !ABBREVIATION_WORD_RE.test(part)) run.push(part);
+      else flush();
+    });
+  }
+  flush();
+  return skipLoneLetter ? runs.filter(name => !/^\p{L}$/u.test(name)) : runs;
+}
+
+/**
+ * A fragment without the punctuation around it: a single quote, which cannot
+ * separate names because the same character is the apostrophe in "Moody's",
+ * or a footnote mark. A leading "." is kept (".NET"), and so is a trailing
+ * "+", "#" or "-" ("C++", "C#", "C--"). The end is trimmed one character at a
+ * time, because an end-anchored pattern rescans a run of symbols from every
+ * position in it.
+ */
+function trimToolFragment(raw) {
+  const chars = Array.from(raw.replace(/^[^\p{L}\p{N}.]+/u, ''));
+  let end = chars.length;
+  while (end > 0 && !/[\p{L}\p{N}+#-]/u.test(chars[end - 1])) end--;
+  return chars.slice(0, end).join('');
+}
+
+/**
+ * Split the text a tool trigger introduced into the fragments `isLikelyTool`
+ * judges.
+ *
+ * A list item of up to three words is returned whole. A longer one is a
+ * clause ("Salesforce across three regions"), returned as its tool-shaped
+ * words (`toolNameRuns`): read whole, it is a claim no source contains, and a
+ * truthful CV blocks.
+ *
+ * A piece that held a boundary's character (`TOOL_BOUNDARY_RE`) used to be
+ * dropped unread. The piece just inside a bracket, the piece just after one,
+ * and the piece after a colon are now read by their tool-shaped words too. A
+ * bracket holds a description as often as a name ("Java (self-hosted)"), and
+ * a colon introduces a clause as often as a list, so lowercase words there are
+ * not read as tools. The piece after "!", "?" or another sentence end
+ * (`TOOL_SENTENCE_END_RE`) begins the next sentence and is still not read. A piece before a boundary is an ordinary item:
+ * "Kubernetes" in "Kubernetes (EKS)" or "Kubernetes: cut release time".
+ */
+function toolFragments(listText) {
+  const fragments = [];
+  // Text at even indexes; the boundary between two texts at the odd index.
+  const parts = listText.split(TOOL_BOUNDARY_RE);
+  for (let index = 0; index < parts.length; index += 2) {
+    const before = parts[index - 1] ?? '';
+    const after = parts[index + 1] ?? '';
+    const pieces = parts[index].split(TOOL_LIST_SEPARATOR_RE).map(trimToolFragment);
+    pieces.forEach((piece, position) => {
+      const first = position === 0;
+      const last = position === pieces.length - 1;
+      if (!piece || (first && TOOL_SENTENCE_END_RE.test(before))) return;
+      // Pushed one at a time: spread into push(), hundreds of thousands of
+      // names overflow the call stack.
+      if ((first && /[([{)\]}:]/.test(before)) || (last && /[)\]}]/.test(after))) {
+        for (const name of toolNameRuns(piece)) fragments.push(name);
+      } else if (!DETERMINER_LEAD_RE.test(piece)) {
+        if (piece.split(/\s+/).length <= 3) fragments.push(piece);
+        else for (const name of toolNameRuns(piece, { skipLoneLetter: true })) fragments.push(name);
+      }
+    });
+  }
+  return fragments;
+}
+
+function isDottedName(word) {
+  if (!DOTTED_NAME_RE.test(word)) return false;
+  const parts = word.split('.').filter(Boolean);
+  return LETTER_RE.test(parts[0]) && LETTER_RE.test(parts[parts.length - 1]);
+}
+
+/**
+ * The dotted names among the words before the first connector of a fragment
+ * `isLikelyTool` rejected, whatever the fragment's length.
+ *
+ * The three-word limit drops "Node.js on AWS Lambda" whole, which leaves the
+ * name to the pattern that stops at the dot, and that one checks "node". A
+ * source that says "Node", or "next quarter" for "Next.js", then backs the
+ * claim. A dotted name (see `isDottedName`) names a product or a site, so
+ * these are kept without the shape and prose checks the rest of the fragment
+ * needs. A word is split at a slash first, so "Node.js/Express" yields
+ * "Node.js". The plain name beside it stays unread. Words after the connector
+ * stay unread, as in `toolNameBeforeConnector`.
+ */
+function dottedNamesBeforeConnector(value) {
+  if (!value.includes('.')) return [];
+  const words = value.trim().split(/\s+/);
+  const connector = words.findIndex(word => TOOL_PROSE_CONNECTORS.has(normalizeFact(word)));
+  return words.slice(0, connector < 0 ? words.length : connector).flatMap(word => word.split('/')).filter(isDottedName);
+}
+
+/**
+ * The tool-shaped name a connector hid inside a fragment `isLikelyTool`
+ * rejected, or '' when there is none.
+ *
+ * A prose word rejects its whole fragment, which is right for ordinary
+ * English and wrong for a name followed by a connector: in "Kubernetes on AWS"
+ * the "on" discarded Kubernetes, so the name the trigger introduced was never
+ * checked. When every prose word in the fragment is a connector
+ * (`TOOL_PROSE_CONNECTORS`), the words before the first one are that name, and
+ * they are kept if `looksToolShaped` accepts them. Any other prose word still
+ * rejects the whole fragment, so "Ops on deployment" yields nothing:
+ * "deployment" marks it as a sentence about work.
+ *
+ * Only the name before the connector is kept. What follows one is usually
+ * where or when the tool was used ("Looker on Mondays", "GCP at Initech").
+ * #4394 kept a place after "in" or "with" as a claim that allow_facts clears.
+ * Reading this position the same way would block those words too, so it is
+ * left unread.
+ *
+ * The name must be tool-shaped, so a lowercase head such as "data" in "data
+ * on Mondays" stays with `isLikelyTool` and this never widens its default
+ * acceptance. Like `isLikelyTool`, it reads at most three words, so a longer
+ * fragment such as "Kubernetes on Google Cloud" is still dropped whole.
+ */
+function toolNameBeforeConnector(value) {
+  const trimmed = value.trim();
+  if (!TOOL_PHRASE_PATTERN.test(trimmed)) return '';
+  const words = trimmed.split(/\s+/).map(word => ({ word, normalized: normalizeFact(word) }));
+  const proseWords = words.filter(({ normalized }) => TOOL_PROSE_WORDS.has(normalized));
+  if (!proseWords.every(({ normalized }) => TOOL_PROSE_CONNECTORS.has(normalized))) return '';
+  const connector = words.findIndex(({ normalized }) => TOOL_PROSE_CONNECTORS.has(normalized));
+  if (connector <= 0) return '';
+  const name = words.slice(0, connector).map(({ word }) => word).join(' ');
+  return looksToolShaped(name) ? name : '';
+}
+
+/**
+ * The values one tool fragment claims, and whether `isLikelyTool` accepted the
+ * fragment whole: the claim is then the whole fragment. When it did not, the
+ * claims are the names `dottedNamesBeforeConnector` and, with `useConnector`,
+ * `toolNameBeforeConnector` recover from it.
+ */
+function toolFragmentClaims(fragment, sourceNormalized, useConnector) {
+  const value = normalizeFact(fragment);
+  if (!value) return { whole: false, values: [] };
+  if (isLikelyTool(fragment, sourceNormalized)) return { whole: true, values: [value] };
+  const names = dottedNamesBeforeConnector(fragment);
+  if (useConnector) names.push(toolNameBeforeConnector(fragment));
+  return { whole: false, values: names.filter(Boolean).map(normalizeFact) };
+}
+
+/**
+ * A name run read out of a phrase, without the ending the phrase gave it: the
+ * quotes around it, a possessive and a lowercase hyphenated suffix. Returns ''
+ * when nothing is left that names a tool, as for "C-suite".
+ *
+ * The suffix is found by splitting at hyphens and dropping trailing
+ * all-lowercase segments, one pass over the word. An end-anchored pattern
+ * would rescan a long run of hyphens from every one of them.
+ */
+function tidyToolName(name) {
+  const parts = name.replace(POSSESSIVE_SUFFIX_RE, '').split('-');
+  let end = parts.length;
+  while (end > 1 && LOWERCASE_SEGMENT_RE.test(parts[end - 1])) end--;
+  if (end === parts.length) return trimToolFragment(parts.join('-'));
+  const stem = trimToolFragment(parts.slice(0, end).join('-'));
+  return Array.from(stem).length < 2 ? '' : stem;
 }
 
 /**
@@ -463,6 +827,19 @@ export function factClaims(text, sourceNormalized = null) {
     // in "Head of AI") must still be allowed.
     ['title', /\b(?:[Ss]erved [Aa]s|[Ww]orked [Aa]s|[Tt]itle\s*:\s*|[Rr]ole\s*:\s*)\s*(?:an?\s+|the\s+)?([A-Z][\w/-]+(?:\s+(?:of|for|and|the)\s+[A-Z][\w/-]*|\s+[A-Z][\w/-]*){0,4})|\b(?:[Ww]orked [Aa]t|[Jj]oined)\s+[A-Z][\w&.'-]*(?:\s+[A-Z][\w&.'-]*){0,4}\s+[Aa]s\s+(?:an?\s+|the\s+)?([A-Z][\w/-]+(?:\s+(?:of|for|and|the)\s+[A-Z][\w/-]*|\s+[A-Z][\w/-]*){0,4})/g],
     ['tool', /\b(?:using|built with|worked with|technologies?\s*:\s*|tech stack\s*:\s*)([^.;\n]+?)(?=\s+\bfor\b|[.;\n]|$)/gi],
+    // The same capture, except that a dot ends it only where no letter or
+    // digit follows. The pattern above stops inside "Node.js", "ASP.NET" and
+    // ".NET", so nothing after the dot was read: "using Node.js and Kafka"
+    // never checked Kafka. A sentence missing the space after its period
+    // ("Tableau.Grew pipeline") reads as one name here and blocks, which is
+    // the fail-closed side of that ambiguity. It stays as it is beside this one rather than being
+    // replaced, because reading through the dot can lengthen a fragment past
+    // the three words `isLikelyTool` accepts ("Node.js's event loop on AWS
+    // Lambda"), and then the name the shorter capture did check would go
+    // unchecked. `dottedNamesBeforeConnector` recovers a dotted name from such
+    // a fragment only when it stands as a word of its own, or is joined to
+    // another by a slash.
+    ['tool', /\b(?:using|built with|worked with|technologies?\s*:\s*|tech stack\s*:\s*)((?:[^.;\n]|\.(?=[\p{L}\p{N}]))+?)(?=\s+\bfor\b|\.(?![\p{L}\p{N}])|[;\n]|$)/giu],
   ];
   for (const [kind, pattern] of patterns) {
     for (const match of clean.matchAll(pattern)) {
@@ -476,17 +853,53 @@ export function factClaims(text, sourceNormalized = null) {
         // A determiner LATER in a list taints only its own fragment, so filter
         // after the split and keep its siblings, including a name the gate has
         // to block (#4004).
-        ? ((!declaredList && DETERMINER_LEAD_RE.test(rawText))
-          ? []
-          : rawText.split(/,|\band\b|\bwith\b|\bin\b/i).filter(raw => !DETERMINER_LEAD_RE.test(raw.trim())))
+        ? ((!declaredList && DETERMINER_LEAD_RE.test(rawText)) ? [] : toolFragments(rawText))
         : [match[1] || match[2]];
+      const connectorRule = kind === 'tool' && !WORKED_WITH_RE.test(match[0]);
       for (const raw of rawValues) {
-        const value = normalizeFact(raw);
-        if (value && (kind !== 'tool' || isLikelyTool(raw, sourceNormalized))) claims.push({ kind, value });
+        // A later item can open with its own "using": "using React, using
+        // Kubernetes". Read it after that trigger, the way the first item is
+        // read, instead of dropping the item as prose for holding "using". A
+        // determiner after it marks prose as it does after the first trigger,
+        // so that item is read whole, as it always was.
+        const afterTrigger = kind === 'tool' ? raw.replace(INNER_TOOL_TRIGGER_RE, '') : raw;
+        const innerTrigger = afterTrigger !== raw && !DETERMINER_LEAD_RE.test(afterTrigger.trim());
+        const fragment = innerTrigger ? afterTrigger : raw;
+        if (kind !== 'tool') {
+          const value = normalizeFact(fragment);
+          if (value) claims.push({ kind, value });
+          continue;
+        }
+        // A leading "a" or "an" changes nothing about whether the fragment is
+        // a tool claim. It is stripped and the rest goes through the decision a
+        // fragment with no article gets. Only when that decision claims the
+        // whole fragment does the article matter: the names in it are claimed
+        // instead, each alone, so "a Kubernetes cluster" checks "kubernetes"
+        // where the source says "Kubernetes". The names are the ones
+        // `toolNameRuns` reads: capitalised words, words with an inner
+        // capital, words with a digit that are not a measure ("3CX", "n8n"),
+        // and dotted names such as "node.js". A fragment with none of them ("a
+        // small team", "a 2024 roadmap") then claims nothing, and neither does
+        // a word that is only ever prose (`PROSE_FRAGMENTS`).
+        const trimmed = fragment.trim();
+        const article = ARTICLE_LEAD_RE.exec(trimmed);
+        const subject = article ? trimToolFragment(trimmed.slice(article[0].length)) : fragment;
+        const decision = toolFragmentClaims(subject, sourceNormalized, connectorRule || innerTrigger);
+        // One letter left from a capture that stopped at the dot of an
+        // abbreviation ("a U.S. agency" reaches here as "a U") names nothing.
+        const values = article && decision.whole
+          ? (/^\p{L}$/u.test(subject) ? [] : toolNameRuns(subject, { digitNames: true })
+            .map(tidyToolName).filter(Boolean).map(normalizeFact).filter(name => !PROSE_FRAGMENTS.has(name)))
+          : decision.values;
+        for (const value of values) claims.push({ kind, value });
       }
     }
   }
-  return claims;
+  // Report each claim once. Both tool patterns read most names, so without
+  // this every tool would be listed twice. Repeated employer and title claims
+  // collapse too, as they already did in verifyFacts.
+  const seen = new Set();
+  return claims.filter(({ kind, value }) => !seen.has(`${kind}\n${value}`) && seen.add(`${kind}\n${value}`));
 }
 
 /** Split generated/source documents into bounded statements for attribution checks. */
@@ -1418,8 +1831,16 @@ function resolveInputPath(path, cwd = process.cwd()) {
   return isAbsolute(path) ? path : join(cwd, path);
 }
 
+// No name or title is this long. A tool claim has no word limit, so a capture
+// that runs on for hundreds of capitalised words, or one enormous token, can
+// reach the lookup below, and escaped into a pattern it is more than the
+// regular expression engine can compile. Such a value reads as absent, which
+// blocks, instead of throwing.
+const MAX_SOURCE_LOOKUP_LENGTH = 500;
+
 /** Check a normalized fact as a complete token or phrase, not a substring. */
 function sourceContainsFact(sourceText, value) {
+  if (value.length > MAX_SOURCE_LOOKUP_LENGTH) return false;
   const escaped = value
     .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     .replace(/\s+/g, '\\s+');

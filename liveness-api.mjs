@@ -39,8 +39,10 @@ import { atsVendorOf } from './ats-vendor.mjs';
 
 const TIMEOUT_MS = 8_000;
 // Strict path-segment charset. Anything with a slash, dot-dot, or other char is
-// rejected before it can reach the fixed-host API URL template.
-const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
+// rejected before it can reach the fixed-host API URL template. The one escape
+// allowed is %20, because some Ashby org slugs contain a space (#5018). A space
+// cannot end a segment or form a traversal; %2F and every other escape still fail.
+const SAFE_SEGMENT = /^(?:[A-Za-z0-9._-]|%20)+$/;
 
 // Most providers extract single path segments (SAFE_SEGMENT covers those directly).
 // Workday's job path is genuinely multi-segment (a location slug + a title slug,
@@ -130,6 +132,55 @@ const ATS_PROVIDERS = [
     api404Authoritative: false,
   },
   {
+    id: 'workable',
+    // apply.workable.com/{account}/j/{shortcode}
+    match(u) {
+      if (u.hostname !== 'apply.workable.com') return null;
+      const m = u.pathname.match(/^\/([^/]+)\/j\/([A-Za-z0-9_-]+)\/?$/);
+      return m ? { account: m[1], shortcode: m[2] } : null;
+    },
+    api: ({ account, shortcode }) => `https://apply.workable.com/api/v2/accounts/${account}/jobs/${shortcode}`,
+    // Workable's posting pages render client-side, so the browser rung reads a
+    // not-yet-painted live posting as nav/footer only (insufficient_content) and
+    // reports it expired, the costly direction: scan --verify writes that to
+    // scan-history as skipped. The v2 JSON endpoint is per-job and needs no
+    // browser. Measured live (#5000): 200 with state "published" is the live
+    // shape and 404 ("Job not found") is the removed shape, so a 404 is
+    // authoritative here and any other readable state stays uncertain.
+    async interpret(res) {
+      let posting;
+      try { posting = await res.json(); } catch { return null; }
+      return classifyWorkablePosting(posting);
+    },
+  },
+  {
+    id: 'workable-short',
+    // apply.workable.com/j/{shortcode} is the share link, and it carries no
+    // account. Following its own redirect yields /{account}/j/{shortcode},
+    // which names the account the v2 endpoint needs (#5000).
+    match(u) {
+      if (u.hostname !== 'apply.workable.com') return null;
+      const m = u.pathname.match(/^\/j\/([A-Za-z0-9_-]+)\/?$/);
+      return m ? { shortcode: m[1] } : null;
+    },
+    api: ({ shortcode }) => `https://apply.workable.com/j/${shortcode}`,
+    async followEmbed(res, { shortcode }) {
+      if (res.status !== 301 && res.status !== 302) return null;
+      let target;
+      try { target = new URL(res.headers.get('location'), 'https://apply.workable.com'); }
+      catch { return null; }
+      if (target.protocol !== 'https:' || target.hostname !== 'apply.workable.com') return null;
+      const m = target.pathname.match(/^\/([^/]+)\/j\/([A-Za-z0-9_-]+)\/?$/);
+      if (!m || m[2] !== shortcode || !isSafeValue(m[1])) return null;
+      return `https://apply.workable.com/api/v2/accounts/${m[1]}/jobs/${m[2]}`;
+    },
+    async interpret(res) {
+      let posting;
+      try { posting = await res.json(); } catch { return null; }
+      return classifyWorkablePosting(posting);
+    },
+  },
+  {
     id: 'ashby',
     // jobs.ashbyhq.com/{org}/{jobId}[/application]. Ashby's public posting API is
     // ORG-level (the whole job board), not per-job — so `api` maps to the board and
@@ -146,6 +197,11 @@ const ATS_PROVIDERS = [
     // unauthenticated hits (see providers/ashby.mjs). Give it more room than the ATS
     // default so a slow-but-live board doesn't time out into a Playwright fallback.
     timeoutMs: 20_000,
+    // The API is board-level, so a 404 means the board API is off for this org
+    // (embed-only boards such as Whatnot, providers/ashby.mjs `ashby.embed`) or
+    // the slug is wrong. Neither says THIS posting is gone: removal shows as a
+    // 200 board that no longer lists the id (`ashby_api_unlisted`).
+    api404Authoritative: false,
     async interpret(res, { jobId }) {
       let json;
       try {
@@ -383,6 +439,33 @@ export function classifyAshbyBoard(json, jobId) {
     return { result: 'active', code: 'ashby_api_ok', reason: 'Ashby posting is listed on the board (live)' };
   }
   return { result: 'expired', code: 'ashby_api_unlisted', reason: 'Ashby posting not listed on the board — removed/unlisted' };
+}
+
+/**
+ * Decide liveness for one Workable posting from its v2 endpoint JSON.
+ * Pure + deterministic (no I/O), mirroring classifyLiveness in liveness-core.mjs.
+ *
+ * The live shape measured against a real posting is `state: "published"` (#5000);
+ * every other readable state stays `uncertain` rather than expired, because the
+ * endpoint is authoritative in the removed direction through its 404 alone, and a
+ * state this rung does not recognise is exactly the case the browser rung cannot
+ * improve on: Workable pages render client-side, so the fallback would call a live
+ * posting expired. An unreadable body returns null so a future API change degrades
+ * to the browser rung rather than to a verdict.
+ *
+ * @param {any} posting - the parsed v2 endpoint response
+ * @returns {{ result: 'active' | 'uncertain', code: string, reason: string } | null}
+ */
+export function classifyWorkablePosting(posting) {
+  if (!posting || typeof posting !== 'object') return null;
+  if (posting.state === 'published') {
+    return { result: 'active', code: 'workable_api_published', reason: 'Workable reports the posting published (live)' };
+  }
+  return {
+    result: 'uncertain',
+    code: 'workable_state_unrecognised',
+    reason: `Workable reports state ${String(posting.state)}; not a verdict this rung can make`,
+  };
 }
 
 /**

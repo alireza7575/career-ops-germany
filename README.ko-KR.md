@@ -19,12 +19,13 @@
   <a href="README.ta.md">தமிழ்</a> |
   <a href="README.ar.md">العربية</a> |
   <a href="README.hi.md">हिन्दी</a> |
-  <a href="README.tr.md">Türkçe</a>
+  <a href="README.tr.md">Türkçe</a> |
+  <a href="README.vi.md">Tiếng Việt</a>
 </p>
 
 <!-- The non-breaking spaces (&nbsp;) and word joiners (&#8288;) below decide where each line wraps on a phone. Keep them when editing. -->
 
-<p align="center"><a href="https://github.com/santifer"><img src="docs/avatar-santifer.png" width="48" height="48" align="middle" alt="Santiago Fernández de Valderrama Aparicio"></a>&nbsp;&nbsp;<a href="https://github.com/santifer"><strong>santifer</strong></a></p>
+<p align="center"><a href="https://github.com/santifer"><img src="docs/avatar-santifer.png" width="48" height="48" align="middle" alt="Santiago Fernández de Valderrama Aparicio"></a>&nbsp;&nbsp;만든 사람: <a href="https://github.com/santifer"><strong>@santifer</strong></a></p>
 
 <p align="center">
 <strong>몇 달 동안 이력서를 보내도 답&#8288;이&nbsp;없&#8288;었&#8288;습&#8288;니&#8288;다.</strong><br>
@@ -180,7 +181,7 @@ career-ops는 구직자에게 영원히 무료입니다. 다음 기업들이 이
 | **면접 스토리 뱅크**   | 평가 데이터 기반 STAR+Reflection 스토리 축적: 실제로 받는 행동 면접 질문에 맞춰 다듬어 쓸 수 있는 5~10개의 마스터 답변                                     |
 | **협상 전략 스크립트** | 연봉 협상 프레임워크, 거주지 기반 연봉 차등(Geographic Discount) 대응 논리, 경쟁 오퍼 활용 전략                                     |
 | **지원 이메일 초안**   | 리포트나 붙여넣은 JD로부터 리크루터, 추천, 콜드 지원용 정식 이메일을 작성: 제목, 첨부 체크리스트, 근거가 있는 적합성 포인트, 프로필 기반 연락처 블록 포함. 초안만 작성하며, career-ops는 절대 보내거나 제출하거나 클릭하지 않습니다. |
-| **포털 스캐너**        | 100개 이상의 기업 사전 설정 (Anthropic, OpenAI, ElevenLabs, Retool, n8n 등) + Ashby, Greenhouse, Lever, Wellfound 전반의 커스텀 검색 |
+| **포털 스캐너**        | 100개 이상의 기업 사전 설정 (Anthropic, OpenAI, ElevenLabs, Retool, n8n 등) + Ashby, Greenhouse, Lever, Wellfound 전반의 커스텀 웹 검색 |
 | **투자 유치 기업 발견** | 검토 우선 방식의 `company:funded` 명령이 구조화된 공개 피드에서 최근 투자를 유치한 기업과 소스 진단을 보여주며, 당신의 데이터는 수정하지 않습니다 |
 | **일괄 처리**          | 헤드리스 CLI 워커(`claude -p` / `opencode run`)로 병렬 평가                                                                          |
 | **Dashboard TUI**      | 터미널 UI에서 파이프라인 탐색, 필터링, 정렬                                                                                         |
@@ -366,7 +367,7 @@ agy
 /career-ops tracker
 ```
 
-스킬은 오픈 표준에 따라 `.agents/skills/career-ops/SKILL.md`에 정의되어 있으며, 지원되는 각 CLI(예: `.claude/`, `.cursor/`, `.qwen/`, `.antigravitycli/`, `.grok/`)에 심볼릭 링크되거나 참조됩니다.
+스킬은 오픈 표준에 따라 `.agents/skills/career-ops/SKILL.md`에 정의되어 있으며, 지원되는 각 CLI(예: `.claude/`, `.qwen/`, `.antigravitycli/`, `.grok/`)에 심볼릭 링크되거나 참조됩니다. Cursor는 `.agents/skills/`의 공유 스킬을 자동으로 발견합니다.
 
 ## Codex 연동
 

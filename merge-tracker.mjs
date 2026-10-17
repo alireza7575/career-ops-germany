@@ -30,7 +30,7 @@ import { execFileSync } from 'child_process';
 import { normalizeReportLink as normalizeLink } from './tracker-links.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { roleFuzzyMatch } from './role-matcher.mjs';
-import { parsePdfIndex } from './find.mjs';
+import { parsePdfIndex, livePdfIndex, normNum } from './find.mjs';
 import { LEGACY_COLMAP, TSV_REQUIRED_FIELDS, detectColumns, isHeaderRow, resolveScoreStatus, looksLikeTsvHeaderRow, resolveTsvColumns, looksLikeScoreCell, normalizeVia, normalizeTextKey, SEPARATOR_ROW_RE, extractReqNumber, extractCellUrl, parseMarkdownLinks } from './tracker-parse.mjs';
 // The ATS vendor table shared with analyze-patterns.mjs and the scanners, so
 // the URL cell's label and the per-vendor analysis name a board identically.
@@ -40,12 +40,13 @@ import { atsVendorOf } from './ats-vendor.mjs';
 // list is how company identity drifts between scripts (#2445, #3665).
 import { LEGAL_SUFFIXES, GENERIC_DESCRIPTORS } from './invite-match.mjs';
 import { resolveTrackerPath, resolveWorkspaceRoot, resolvePdfIndexPath, trackerLockDirFor, acquireTrackerLock, writeFileAtomic, normalizeCompany, cell, loadCanonicalStates, findDeadReportLink, rebuildRow } from './tracker-utils.mjs';
-// Canonical posting-URL key. Kept in its own module so scan.mjs / scan-history
-// can adopt the same key later without the definitions drifting.
-import { normalizeUrl, isAggregatorUrl, aggregatorPostingId } from './url-key.mjs';
+// Canonical posting-URL key and URL comparison, shared with the other tracker
+// scripts and scan.mjs so the definitions cannot drift apart.
+import { normalizeUrl, isAggregatorUrl, aggregatorPostingId, postingUrlRelation } from './url-key.mjs';
 import { validateFlags } from './lib/cli-flags.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { syncTrackerPdfFlags } from './sync-pdf-flags.mjs';
+import { withPipelineLock } from './pipeline-lock.mjs';
 
 const MERGE_TRACKER_USAGE = `Usage: node merge-tracker.mjs [options]
 
@@ -683,8 +684,8 @@ export async function mergeTracker(options = {}) {
    * @returns {number} Parsed score, or 0 when no numeric value is present.
    */
   function parseScore(s) {
-    const m = s.replace(/\*\*/g, '').match(/([\d.]+)/);
-    return m ? parseFloat(m[1]) : 0;
+    const m = s.replace(/\*\*/g, '').match(/(\d+(?:[.,]\d+)?)/);
+    return m ? parseFloat(m[1].replace(',', '.')) : 0;
   }
 
   /**
@@ -709,12 +710,53 @@ export async function mergeTracker(options = {}) {
    * data/pdf-index.tsv is gitignored and only exists after generate-pdf.mjs has
    * written at least one PDF. Missing manifest = nothing to sync.
    *
+   * Only rows whose PDF is still on disk come back (#4777): every reader of this
+   * map turns a hit into a ✅, and a row outlives the file it names.
+   *
    * @returns {Map<string,string>} Normalized report# → PDF path.
    */
   function loadPdfIndex() {
-    return existsSync(PDF_INDEX_FILE)
-      ? parsePdfIndex(readFileSync(PDF_INDEX_FILE, 'utf-8'))
-      : new Map();
+    if (!existsSync(PDF_INDEX_FILE)) return new Map();
+    return livePdfIndex(
+      parsePdfIndex(readFileSync(PDF_INDEX_FILE, 'utf-8')),
+      DATA_ROOT,
+      (message) => console.warn(`⚠️  ${message}`),
+    );
+  }
+
+  // generate-pdf.mjs owns the manifest row rules (applyManifestRow) and the lock
+  // around its read-modify-write. It is imported here, on the rare re-key path
+  // only, because it loads Playwright.
+  async function rekeyLivePdf(pdfIndex, oldReportNum, newReportNum) {
+    const oldKey = normNum(oldReportNum);
+    const newKey = normNum(newReportNum);
+    if (!oldKey || !newKey || oldKey === newKey) return;
+    if (!pdfIndex.has(oldKey) || pdfIndex.has(newKey)) return;
+    const pdfPath = pdfIndex.get(oldKey);
+
+    if (!DRY_RUN) {
+      const { applyManifestRow } = await import('./generate-pdf.mjs');
+      const moved = await withPipelineLock(PDF_INDEX_FILE, () => {
+        if (!existsSync(PDF_INDEX_FILE)) return false;
+        const lines = readFileSync(PDF_INDEX_FILE, 'utf-8').split(/\r?\n/);
+        const row = lines
+          .filter((line) => line.trim() && !line.startsWith('#'))
+          .map((line) => line.split('\t'))
+          .find((fields) => normNum(fields[0]) === oldKey && fields[1] === pdfPath);
+        if (!row) return false;
+        const kept = applyManifestRow(lines, {
+          reportNum: newKey, pdf: row[1], html: row[2], format: row[3], date: row[4],
+          kind: (row[5] ?? '').trim() === 'cover' ? 'cover' : 'cv',
+        });
+        const header = lines.filter((line) => line.startsWith('#'));
+        writeFileAtomic(PDF_INDEX_FILE, `${[...header, ...kept].join('\n')}\n`);
+        return true;
+      });
+      if (!moved) return;
+    }
+
+    pdfIndex.delete(oldKey);
+    pdfIndex.set(newKey, pdfPath);
   }
 
   /**
@@ -1879,6 +1921,12 @@ export async function mergeTracker(options = {}) {
       // stay UNKNOWN, so slug-vs-id spellings and uk./www. region hosts keep
       // collapsing and #3652 is preserved. Gating on the HOST instead was measured
       // to split one posting across two rows, which is why the ID is the gate.
+      //
+      // Between two employer-controlled URLs, a language param on ONE side is not
+      // proof of two postings: the bare URL and one that asks for a language are
+      // the same page, and the bare URL does not say which language it serves.
+      // Two known, different languages are two language versions, which stay
+      // two rows (postingUrlRelation in url-key.mjs).
       const urlDiffers = (cand) => {
         const candUrl = normalizeUrl(cand.url);
         if (!candUrl || !addUrl) return false;   // unknown → not evidence
@@ -1889,7 +1937,7 @@ export async function mergeTracker(options = {}) {
           // says the two BOARDS differ, which is the non-signal above.
           return Boolean(candId && addId && candId.domain === addId.domain && candId.id !== addId.id);
         }
-        return candUrl !== addUrl;
+        return postingUrlRelation(cand.url, addition.url) === 'distinct';
       };
 
       // The heuristic tiers additionally refuse to let an UNKEYED addition claim a
@@ -1900,8 +1948,16 @@ export async function mergeTracker(options = {}) {
       // append a duplicate row. Tiers 2 and 3 match on an entry number or a fuzzy
       // title, which are guesses; there, "this row is a specific known posting and
       // you have not told me which posting you are" is a good reason to stay out.
+      //
+      // A language param on one side only blocks these tiers too. It is not
+      // proof of two postings, so the report tiers above may still match across
+      // it, but it is not proof of one either: a bare row SKIPped for its German
+      // text and an incoming evaluation of the English version share a title,
+      // and folding them would bury the English one under the SKIP.
       const urlBlocksHeuristic = (cand) => {
         if (urlDiffers(cand)) return true;
+        if (!isAggregatorUrl(cand.url) && !isAggregatorUrl(addition.url)
+          && postingUrlRelation(cand.url, addition.url) === 'one-sided-language') return true;
         return Boolean(normalizeUrl(cand.url)) && !addUrl;
       };
 
@@ -2116,19 +2172,20 @@ export async function mergeTracker(options = {}) {
           `${downgrade ? '🔽' : '🔄'} Update: #${duplicate.num} ${addition.company} — ${addition.role} (${oldScore}→${newScore})`
           + (downgrade ? ' — DOWNGRADE, re-eval scored lower' : ''),
         );
-        // The PDF flag describes THE ROW'S REPORT, and this branch replaces that
+        // The PDF flag describes the row's report, and this branch replaces that
         // report link. Inheriting duplicate.pdf across a report change carried the
-        // superseded report's ✅ onto the new one: the row then claimed a tailored
-        // PDF exists for a report that has none, and the only PDF on disk belonged
-        // to the evaluation that was just superseded. Fall back to the existing
-        // flag only when the report is unchanged; when it changes, the manifest is
-        // the sole authority (#2594).
-        // "different, INCLUDING one-side-absent". Requiring both to be truthy meant
-        // a row whose report cell is `—` had oldReportNum === null, so reportChanged
-        // was falsy and the stale ✅ was inherited exactly as before this fix — and a
-        // `—` row with a ✅ is ordinary, it is what a tracker entry added before its
-        // evaluation looks like. Both absent stays "unchanged", which is correct.
+        // superseded report's check onto the new one: the row claimed a tailored
+        // PDF for a report that has none (#2594). A live PDF still filed under the
+        // previous report is re-keyed onto the new report first, so the formula
+        // below still means the linked report is in the index. Fall back to the
+        // existing flag only when the report is unchanged.
+        // reportChanged is "different, including one side absent". Requiring both
+        // sides to be set left a row whose report cell is `—` looking unchanged,
+        // because oldReportNum was null, and the stale check survived. A `—` row
+        // with a check is what an entry looks like before it is evaluated. Both
+        // absent stays unchanged.
         const reportChanged = String(reportNum ?? '') !== String(oldReportNum ?? '');
+        if (reportChanged) await rekeyLivePdf(pdfIndex, oldReportNum, reportNum);
         const pdf = reportNum && pdfIndex.has(String(reportNum))
           ? '✅'
           : (reportChanged ? '❌' : duplicate.pdf);
@@ -2313,6 +2370,7 @@ export async function mergeTracker(options = {}) {
         const code = await syncTrackerPdfFlags({
           appsFile: APPS_FILE,
           pdfManifest: PDF_INDEX_FILE,
+          dataRoot: DATA_ROOT,
           lockDir: TRACKER_LOCK_DIR,
           lock: options.lock,
           logger: console,

@@ -19,7 +19,7 @@ import * as yaml from 'js-yaml';
 // EPERM/EACCES/EBUSY under contention while this file still treated anything
 // but EEXIST as fatal, killing a writer and losing its item.
 import {
-  isMkdirContention, isRmContention, rmLockArtifactSync, createLockWaitPolicy,
+  isMkdirContention, isRmContention, rmLockArtifactSync, createLockWaitPolicy, sameLockDirectory,
   lockRecoveryVerdict, RECOVER_STALE,
 } from './pipeline-lock.mjs';
 import { normalizeTextKey } from './tracker-parse.mjs';
@@ -400,11 +400,6 @@ function readLockOwner(lockDir) {
   } catch {
     return null;
   }
-}
-
-function sameLockDirectory(left, right) {
-  return left.dev === right.dev && left.ino === right.ino
-    && (left.ino !== 0 || left.birthtimeMs === right.birthtimeMs);
 }
 
 // The recovery judgment comes from pipeline-lock rather than a second copy of
@@ -794,7 +789,7 @@ export function writeFileAtomic(path, content, { mode } = {}) {
 /**
  * Load the canonical tracker states from `templates/states.yml`.
  *
- * states.yml is the single source of truth for the 8 canonical states and
+ * states.yml is the single source of truth for the canonical states and
  * their aliases. Parsing it here (instead of hardcoding the list) means a new
  * state or alias lands in one file and every consumer follows.
  *
@@ -878,6 +873,28 @@ export function resolveCanonicalState(input, states) {
 }
 
 /**
+ * Resolve a raw tracker status CELL to its canonical lowercase state id.
+ *
+ * The read-side twin of resolveCanonicalState(): scripts that bucket or compare
+ * tracker rows (analyze-patterns, tracker-sync-check) work in ids
+ * (`interview`), not labels (`Interview`), and read cells that legacy trackers
+ * left with a date appended (`Rejected 2026-06-01`). Both steps live here so no
+ * reader needs its own alias table. The hand-copied ones had drifted: a
+ * `Mülakat` row counted as "pending" in the pattern analysis and as an
+ * unrecognized status in the sync check.
+ *
+ * @param {*} input - Raw status cell from applications.md.
+ * @param {{id:string,label:string,aliases:string[]}[]} states - From loadCanonicalStates().
+ * @returns {string|null} Canonical id (e.g. "interview"), or null when unknown.
+ */
+export function resolveCanonicalStateId(input, states) {
+  const cell = String(input ?? '').replace(/\*\*/g, '').replace(/\s+\d{4}-\d{2}-\d{2}.*$/, '');
+  const label = resolveCanonicalState(cell, states);
+  if (label === null) return null;
+  return states.find(s => s.label === label).id.toLowerCase();
+}
+
+/**
  * Canonical process-exit codes shared by every locked, single-purpose
  * tracker-writer CLI (set-status.mjs, mark-pdf-ready.mjs, ...) — one source
  * so a new script can't drift from the numbering an existing one already
@@ -903,6 +920,41 @@ export function makeCliFailWith(json) {
     }
     console.error(`❌ ${message}`);
     process.exit(exitCode);
+  };
+}
+
+/**
+ * Build a failUsage(message) bound to raw argv and a USAGE string, shared by
+ * every canonical tracker-writer CLI so the usage-error contract can't drift
+ * between them. The copies differ only in defaultMessage.
+ *
+ * Print usage (plus an optional specific complaint) and exit CLI_EXIT.USAGE.
+ *
+ * With --json a structured usage-error payload goes to stdout (same shape as
+ * failWith) so machine callers always parse one stream. failUsage can fire
+ * mid-argv-parse — before flags.json is settled — so JSON mode is detected
+ * from the raw argv directly. JSON must be the last thing written to stdout;
+ * machine callers parse stdout as one JSON document. The human-readable
+ * `❌` line always goes to stderr.
+ *
+ * Without --json, a specific complaint is printed to stderr only when a
+ * message was given, then the USAGE text.
+ *
+ * @param {{argv: string[], usage: string, defaultMessage: string}} options
+ * @returns {(message?: string|null) => never}
+ */
+export function makeCliFailUsage({ argv, usage, defaultMessage }) {
+  return function failUsage(message) {
+    const msg = message ?? defaultMessage;
+    if (argv.includes('--json')) {
+      // JSON must be the last thing written to stdout; machine callers parse stdout as one JSON document.
+      console.log(JSON.stringify({ error: msg, code: 'usage' }));
+      console.error(`❌ ${msg}`);
+    } else {
+      if (message) console.error(`❌ ${message}\n`);
+      console.error(usage);
+    }
+    process.exit(CLI_EXIT.USAGE);
   };
 }
 

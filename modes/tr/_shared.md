@@ -56,7 +56,7 @@ Değerlendirme 6 blok (A-F) üzerinden yapılır ve 1-5 arası global bir puan v
 **Puan yorumu:**
 - 4,5+ → Güçlü eşleşme, hemen başvur
 - 4,0-4,4 → İyi eşleşme, başvurmaya değer
-- 3,5-3,9 → Kabul edilebilir ama ideal değil; özel bir neden olmadıkça geç
+- 3,5-3,9 → Kabul edilebilir ama ideal değil; kullanıcı belirli bir neden söylemedikçe başvurmamayı öner (AGENTS.md'deki Ethical Use sınırı 4,0'da çizer)
 - 3,5'in altı → Başvuru önerilmez (CLAUDE.md'deki Etik Kullanım bölümüne bakın)
 
 ## İlan Meşruiyeti (Blok G)
@@ -294,9 +294,9 @@ Türkçe iş ilanlarında ve sözleşme müzakerelerinde, yabancı piyasalarda k
 | Playwright | İlan doğrulama (browser_navigate + browser_snapshot). **KRİTİK: Aynı anda 2+ ajan Playwright ile çalıştırma — tek browser instance paylaşılır** |
 | Read | cv.md, _profile.md, article-digest.md, cv-template.html |
 | Write | PDF için geçici HTML, rapor .md dosyaları, `batch/tracker-additions/*.tsv` (yeni takipçi girişleri) |
-| Edit | `data/applications.md`'de mevcut satır güncellemeleri (durum, PDF, rapor bağlantısı) |
+| Edit | Rapor ve diğer üretilmiş içerikteki düzeltmeler. `data/applications.md` tablosu asla doğrudan düzenlenmez: yeni satırlar TSV olarak eklenip `node merge-tracker.mjs` ile birleştirilir, mevcut satırların durum ve not güncellemeleri `node set-status.mjs` ile yapılır |
 | Canva MCP | İsteğe bağlı görsel CV üretimi. Temel tasarımı çoğalt, metni düzenle, PDF olarak dışa aktar. `profile.yml`'de `canva_resume_design_id` gerektirir. |
-| Bash | `node generate-pdf.mjs` |
+| Bash | `node generate-pdf.mjs`, `node merge-tracker.mjs`, `node set-status.mjs` |
 
 ---
 

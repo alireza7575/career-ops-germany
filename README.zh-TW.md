@@ -19,12 +19,15 @@
   <a href="README.ta.md">தமிழ்</a> |
   <a href="README.ar.md">العربية</a> |
   <a href="README.hi.md">हिन्दी</a> |
-  <a href="README.tr.md">Türkçe</a>
+  <a href="README.tr.md">Türkçe</a> |
+  <a href="README.vi.md">Tiếng Việt</a>
 </p>
+
+<p align="center"><a href="https://career-ops.org/zh?utm_source=readme&utm_content=zh-tw">網站目前只有簡體中文版：career-ops.org/zh</a></p>
 
 <!-- The non-breaking spaces (&nbsp;) and word joiners (&#8288;) below decide where each line wraps on a phone. Keep them when editing. -->
 
-<p align="center"><a href="https://github.com/santifer"><img src="docs/avatar-santifer.png" width="48" height="48" align="middle" alt="Santiago Fernández de Valderrama Aparicio"></a>&nbsp;&nbsp;<a href="https://github.com/santifer"><strong>santifer</strong></a></p>
+<p align="center"><a href="https://github.com/santifer"><img src="docs/avatar-santifer.png" width="48" height="48" align="middle" alt="Santiago Fernández de Valderrama Aparicio"></a>&nbsp;&nbsp;由 <a href="https://github.com/santifer"><strong>@santifer</strong></a> 建立</p>
 
 <p align="center">
 <strong>幾個月投出去的履歷，全都石&#8288;沉&#8288;大&#8288;海。</strong><br>
@@ -180,7 +183,7 @@ career-ops 對求職者永久免費。這些公司贊助了本專案：
 | **面試故事庫**           | 跨評估累積 STAR+反思故事：5 到 10 個主故事，可以針對你遇到的行為面試問題靈活調整                                                                         |
 | **談判話術**             | 薪資談判框架、應對地域折價、以競爭 offer 作為籌碼                                                                                         |
 | **申請郵件草稿**         | 從報告或貼上的職缺描述產生給招募人員、內推或主動應徵的正式郵件，包含主旨、附件清單、有憑有據的契合點，以及來自你個人資料的聯絡資訊區塊。僅限草稿：career-ops 從不寄送、送出或點擊任何內容。 |
-| **求職平台掃描器**       | 預先設定 100+ 家企業（Anthropic、OpenAI、ElevenLabs、Retool、n8n…）+ 跨 Ashby、Greenhouse、Lever、Wellfound 的自訂查詢                     |
+| **求職平台掃描器**       | 預先設定 100+ 家企業（Anthropic、OpenAI、ElevenLabs、Retool、n8n…）+ 跨 Ashby、Greenhouse、Lever、Wellfound 的自訂網頁搜尋查詢             |
 | **已募資企業探索**       | 以審閱為先的 `company:funded` 指令從結構化的公開資料來源列出近期獲得募資的企業與來源診斷，不更動你的資料                                    |
 | **批次處理**             | 用無頭 CLI worker（`claude -p` / `opencode run`）並行評估                                                                                  |
 | **Dashboard TUI**        | 在終端機裡瀏覽、篩選和排序你的流程                                                                                                        |
@@ -366,7 +369,7 @@ agy
 /career-ops tracker
 ```
 
-這個 skill 按開放標準定義在 `.agents/skills/career-ops/SKILL.md` 中，並為每個支援的 CLI（例如 `.claude/`、`.cursor/`、`.qwen/`、`.antigravitycli/`、`.grok/`）建立了符號連結或引用。
+這個 skill 按開放標準定義在 `.agents/skills/career-ops/SKILL.md` 中，並為每個支援的 CLI（例如 `.claude/`、`.qwen/`、`.antigravitycli/`、`.grok/`）建立了符號連結或引用。 Cursor 會自動探索 `.agents/skills/` 中的共用 skill。
 
 ## Codex 整合
 

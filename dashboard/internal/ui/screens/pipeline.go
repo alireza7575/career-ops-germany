@@ -109,6 +109,17 @@ type PipelineHistoryFailedMsg struct {
 	Err string
 }
 
+// PipelineTrackerFailedMsg reports that the tracker could not be read and the
+// screen is still showing the previous applications.
+//
+// Sibling of PipelineHistoryFailedMsg, for the more consequential of the two
+// files: rebuilding the pipeline from a failed tracker read empties it, and
+// ComputeProgressMetrics then reports every rate as 0% — an empty pipeline and
+// a search that looks like it is failing, because a file could not be opened.
+type PipelineTrackerFailedMsg struct {
+	Err string
+}
+
 // PipelineOpenProgressMsg is emitted when the progress screen should open.
 type PipelineOpenProgressMsg struct{}
 
@@ -150,15 +161,16 @@ const (
 
 // Filter modes
 const (
-	filterAll       = "all"
-	filterEvaluated = "evaluated"
-	filterApplied   = "applied"
-	filterInterview = "interview"
-	filterResponded = "responded"
-	filterSkip      = "skip"
-	filterRejected  = "rejected"
-	filterDiscarded = "discarded"
-	filterTop       = "top"
+	filterAll        = "all"
+	filterEvaluated  = "evaluated"
+	filterApplied    = "applied"
+	filterInterview  = "interview"
+	filterResponded  = "responded"
+	filterAssessment = "assessment"
+	filterSkip       = "skip"
+	filterRejected   = "rejected"
+	filterDiscarded  = "discarded"
+	filterTop        = "top"
 )
 
 type pipelineTab struct {
@@ -171,6 +183,7 @@ func getPipelineTabs() []pipelineTab {
 		{filterAll, i18n.Current.TabAll},
 		{filterEvaluated, i18n.Current.TabEvaluated},
 		{filterInterview, i18n.Current.TabInterview},
+		{filterAssessment, i18n.Current.TabAssessment},
 		{filterResponded, i18n.Current.TabResponded},
 		{filterApplied, i18n.Current.TabApplied},
 		{filterTop, i18n.Current.TabTop},
@@ -232,6 +245,7 @@ func getStatusPairs(currentNormalized string) []StatusPair {
 		{i18n.Current.StatusEvaluated, "Evaluated"},
 		{i18n.Current.StatusApplied, "Applied"},
 		{i18n.Current.StatusResponded, "Responded"},
+		{i18n.Current.StatusAssessment, "Assessment"},
 		{i18n.Current.StatusInterview, "Interview"},
 		{i18n.Current.StatusOffer, "Offer"},
 		{i18n.Current.StatusHired, "Hired"},
@@ -277,7 +291,7 @@ func (m PipelineModel) currentStatusPairs() []StatusPair {
 }
 
 // statusGroupOrder defines display order for grouped view.
-var statusGroupOrder = []string{"hired", "interview", "offer", "responded", "applied", "evaluated", "skip", "rejected", "discarded"}
+var statusGroupOrder = []string{"hired", "interview", "offer", "assessment", "responded", "applied", "evaluated", "skip", "rejected", "discarded"}
 
 // PipelineModel implements the career pipeline dashboard screen.
 type PipelineModel struct {
@@ -510,6 +524,9 @@ func (m PipelineModel) Update(msg tea.Msg) (PipelineModel, tea.Cmd) {
 	case PipelineHistoryFailedMsg:
 		m.flash = "Status history unavailable; progress uses previous data: " + msg.Err
 		return m, nil
+	case PipelineTrackerFailedMsg:
+		m.flash = "Tracker unavailable; showing previous applications: " + msg.Err
+		return m, nil
 	case pipelineStartDiscardPickerMsg:
 		// Issue 1380: initialise the discard reason picker state.
 		// Merge predicted reasons (from report) with canonical fallback options.
@@ -652,7 +669,7 @@ func (m PipelineModel) handleKey(msg tea.KeyMsg) (PipelineModel, tea.Cmd) {
 	case "d":
 		if app, ok := m.CurrentApp(); ok {
 			manifest := data.LoadPDFManifest(m.careerOpsPath)
-			candidates := data.ResolvePDFs(m.careerOpsPath, app, manifest)
+			candidates := data.ResolvePDFs(data.PDFWorkspaceRoot(m.careerOpsPath), app, manifest)
 			if len(candidates) == 0 {
 				m.flash = "No CV PDF found for this application — generate one with /career-ops pdf"
 			} else {
@@ -662,13 +679,14 @@ func (m PipelineModel) handleKey(msg tea.KeyMsg) (PipelineModel, tea.Cmd) {
 
 	case "D":
 		if app, ok := m.CurrentApp(); ok {
+			workspaceRoot := data.PDFWorkspaceRoot(m.careerOpsPath)
 			manifest := data.LoadPDFManifest(m.careerOpsPath)
 			entry, found := manifest.Lookup(app)
 			// Manifest lookup requires a report number; fall back to PDF-path
 			// index when the manifest was written without --report (common case).
 			if !found || entry.HTMLPath == "" {
 				byPath := data.LoadPDFEntriesByPath(m.careerOpsPath)
-				candidates := data.ResolvePDFs(m.careerOpsPath, app, manifest)
+				candidates := data.ResolvePDFs(workspaceRoot, app, manifest)
 				for _, c := range candidates {
 					if e, ok := byPath[c]; ok && e.HTMLPath != "" {
 						entry = e
@@ -681,12 +699,12 @@ func (m PipelineModel) handleKey(msg tea.KeyMsg) (PipelineModel, tea.Cmd) {
 				m.flash = "No source HTML found for this application — run /career-ops pdf first"
 				return m, nil
 			}
-			if _, err := os.Stat(filepath.Join(m.careerOpsPath, filepath.FromSlash(entry.HTMLPath))); err != nil {
+			if _, err := os.Stat(filepath.Join(workspaceRoot, filepath.FromSlash(entry.HTMLPath))); err != nil {
 				m.flash = "Source HTML missing: " + entry.HTMLPath
 				return m, nil
 			}
 			m.flash = "Regenerating PDF via generate-pdf.mjs — this takes a few seconds..."
-			path, report := m.careerOpsPath, entry.ReportNumber
+			path, report := workspaceRoot, entry.ReportNumber
 			html, pdf, format := entry.HTMLPath, entry.PDFPath, entry.Format
 			return m, func() tea.Msg {
 				return PipelineGeneratePDFMsg{
@@ -1118,7 +1136,7 @@ func (m PipelineModel) handleColPicker(msg tea.KeyMsg) (PipelineModel, tea.Cmd) 
 
 // openPDFCmd emits a PipelineOpenPDFMsg for a root-relative PDF path.
 func (m PipelineModel) openPDFCmd(relPath string) tea.Cmd {
-	fullPath := filepath.Join(m.careerOpsPath, filepath.FromSlash(relPath))
+	fullPath := filepath.Join(data.PDFWorkspaceRoot(m.careerOpsPath), filepath.FromSlash(relPath))
 	return func() tea.Msg {
 		return PipelineOpenPDFMsg{Path: fullPath}
 	}
@@ -2289,15 +2307,16 @@ func (m PipelineModel) scoreStyle(score float64) lipgloss.Style {
 
 func (m PipelineModel) statusColorMap() map[string]lipgloss.Color {
 	return map[string]lipgloss.Color{
-		"hired":     m.theme.Green, // terminal success — never uncoloured (default) like an unknown status
-		"interview": m.theme.Green,
-		"offer":     m.theme.Green,
-		"applied":   m.theme.Sky,
-		"responded": m.theme.Blue,
-		"evaluated": m.theme.Text,
-		"skip":      m.theme.Red,
-		"rejected":  m.theme.Subtext,
-		"discarded": m.theme.Subtext,
+		"hired":      m.theme.Green, // terminal success — never uncoloured (default) like an unknown status
+		"interview":  m.theme.Green,
+		"offer":      m.theme.Green,
+		"applied":    m.theme.Sky,
+		"responded":  m.theme.Blue,
+		"assessment": m.theme.Mauve,
+		"evaluated":  m.theme.Text,
+		"skip":       m.theme.Red,
+		"rejected":   m.theme.Subtext,
+		"discarded":  m.theme.Subtext,
 	}
 }
 

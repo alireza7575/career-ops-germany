@@ -19,12 +19,13 @@
   <a href="README.ta.md">தமிழ்</a> |
   <a href="README.ar.md">العربية</a> |
   <a href="README.hi.md">हिन्दी</a> |
-  <a href="README.tr.md">Türkçe</a>
+  <a href="README.tr.md">Türkçe</a> |
+  <a href="README.vi.md">Tiếng Việt</a>
 </p>
 
 <!-- The non-breaking spaces (&nbsp;) and word joiners (&#8288;) below decide where each line wraps on a phone. Keep them when editing. -->
 
-<p align="center"><a href="https://github.com/santifer"><img src="docs/avatar-santifer.png" width="48" height="48" align="middle" alt="Santiago Fernández de Valderrama Aparicio"></a>&nbsp;&nbsp;<a href="https://github.com/santifer"><strong>santifer</strong></a></p>
+<p align="center"><a href="https://github.com/santifer"><img src="docs/avatar-santifer.png" width="48" height="48" align="middle" alt="Santiago Fernández de Valderrama Aparicio"></a>&nbsp;&nbsp;Создано <a href="https://github.com/santifer"><strong>@santifer</strong></a></p>
 
 <p align="center">
 <strong>Месяцы отправки резюме в&nbsp;тишину.</strong><br>
@@ -180,7 +181,7 @@ career-ops бесплатен для кандидатов, навсегда. Э�
 | **Банк историй для собеседований** | Накапливает истории STAR+Reflection между оценками: 5-10 главных историй, которые можно адаптировать под заданные вам поведенческие вопросы                |
 | **Скрипты переговоров**  | Фреймворки переговоров о зарплате, ответ на географическую скидку, рычаг конкурирующих офферов                                            |
 | **Черновики писем-откликов** | Формальные письма рекрутеру, по рекомендации или холодные отклики из отчёта или вставленного описания, с темой, чеклистом вложений, обоснованными пунктами соответствия и блоком контактов из профиля. Только черновики: career-ops никогда не отправляет, не подаёт и не кликает ничего. |
-| **Сканер порталов**      | 100+ предварительно настроенных компаний (Anthropic, OpenAI, ElevenLabs, Retool, n8n...) + собственные запросы по Ashby, Greenhouse, Lever, Wellfound |
+| **Сканер порталов**      | 100+ предварительно настроенных компаний (Anthropic, OpenAI, ElevenLabs, Retool, n8n...) + собственные поисковые веб-запросы по Ashby, Greenhouse, Lever, Wellfound |
 | **Поиск профинансированных компаний** | Команда `company:funded` (сначала просмотр) показывает компании с недавним финансированием и диагностику источников из структурированных публичных лент, не меняя ваши данные |
 | **Пакетная обработка**   | Параллельная оценка headless CLI-воркерами (`claude -p` / `opencode run`)                                                               |
 | **Dashboard TUI**        | Терминальный интерфейс для просмотра, фильтрации и сортировки вашего конвейера                                                           |
@@ -366,7 +367,7 @@ agy
 /career-ops tracker
 ```
 
-Скилл определён по открытому стандарту в `.agents/skills/career-ops/SKILL.md` и подключён символической ссылкой или ссылкой для каждого поддерживаемого CLI (например `.claude/`, `.cursor/`, `.qwen/`, `.antigravitycli/`, `.grok/`).
+Скилл определён по открытому стандарту в `.agents/skills/career-ops/SKILL.md` и подключён символической ссылкой или ссылкой для каждого поддерживаемого CLI (например `.claude/`, `.qwen/`, `.antigravitycli/`, `.grok/`). Cursor автоматически обнаруживает общий скилл в `.agents/skills/`.
 
 ## Интеграция с Codex
 
