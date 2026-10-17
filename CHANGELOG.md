@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.1](https://github.com/alireza7575/career-ops-germany/compare/career-ops-v1.36.0...career-ops-v1.36.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **ci:** handle upstream and fork release tag collisions ([ad5827a](https://github.com/alireza7575/career-ops-germany/commit/ad5827a406a0e8a6687584fd00df56c7a8508ded))
+
 ## [1.36.0](https://github.com/alireza7575/career-ops-germany/compare/career-ops-v1.35.0...career-ops-v1.36.0) (2026-10-11)
 
 
