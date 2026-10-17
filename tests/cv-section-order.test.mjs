@@ -1101,6 +1101,7 @@ export const chromium = {
 
     const run = spawnSync(NODE, [script, `--batch=${manifest}`], {
       cwd: sandbox, encoding: 'utf-8', timeout: 60_000,
+      env: { ...process.env, CAREER_OPS_ROOT: sandbox, CAREER_OPS_TRACKER: join(sandbox, 'data', 'applications.md') },
     });
     const outPdf = join(sandbox, 'out', 'in.pdf');
 

@@ -136,7 +136,12 @@ test('web tiles consume the core recovered-stage contract, including case normal
   const apps = states.map((status,i) => ({n:String(i+1),status}));
   const log = [18,19,20].map(n => `${n}\t2026-09-01\tinterview\tREJECTED`).join('\n');
   const ranks = [...recoverFunnelStages(new Map(states.map((s,i) => [i+1,s])), parseStatusLogStages(log)).values()];
-  assert.deepEqual(await cumulativeTilesWithHistory(apps, log, coreRoot), {interviews:ranks.filter(r => r >= 3).length, offers:ranks.filter(r => r >= 4).length});
+  assert.deepEqual(await cumulativeTilesWithHistory(apps, log, coreRoot), {interviews:ranks.filter(r => r >= 4).length, offers:ranks.filter(r => r >= 5).length});
   assert.equal((await cumulativeTilesWithHistory(apps, log, coreRoot)).interviews, 5);
   assert.deepEqual(await cumulativeTilesWithHistory([{n:'1',status:'Discarded'}], '1\t2026-09-01\toffer\tDiscarded', coreRoot), {interviews:1,offers:1});
+});
+
+test('assessment and interview stages do not inflate later-stage tiles', async () => {
+  const apps = [{ n: '1', status: 'Assessment' }, { n: '2', status: 'Interview' }];
+  assert.deepEqual(await cumulativeTilesWithHistory(apps, '', coreRoot), { interviews: 1, offers: 0 });
 });

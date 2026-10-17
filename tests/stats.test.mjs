@@ -41,6 +41,17 @@ try {
   });
   pass('canonicalized SKIP rows cannot recover prior interview or offer stages');
 
+  const assessment = stats.computeFunnelWithHistory(new Map([[1, 'Assessment']]), []);
+  assert.equal(assessment.everApplied, 1);
+  assert.equal(assessment.everResponded, 1);
+  assert.equal(assessment.everInterview, 0);
+  assert.equal(assessment.everOffer, 0);
+  assert.deepEqual(stats.computeFunnel({ Assessment: 1 }), {
+    everApplied: 1, everResponded: 1, everInterview: 0, everOffer: 0,
+    responseRate: 100, interviewRate: 0, offerRate: 0, smallSample: true,
+  });
+  pass('Assessment counts as a response without inflating interviews or offers');
+
   // Tracker roll-up — CRLF input on purpose (Windows checkouts).
   const trackerMd = [
     '# Applications Tracker',
