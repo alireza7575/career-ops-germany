@@ -917,16 +917,24 @@ try {
     'cdp-diff-focused.patch',
     'test_diff.patch',
     'test_diff_utf8.patch',
+    // A marker would redirect the throwaway copy back to the developer's data.
+    MARKER_FILE,
     basename(scriptTmp),
   ];
   walkTree(ROOT, {
     links: 'follow',
-    onError: 'throw',
     skip: (entry, _dir, depth) => EXCLUDE_AT_ANY_DEPTH.has(entry.name)
       // Root exclusions must not remove nested fixture data/reports.
       || (depth === 0 && excludeDirs.includes(entry.name)),
     onDir: (src) => mkdirSync(join(scriptTmp, relative(ROOT, src)), { recursive: true }),
-    onFile: (src) => copyFileSync(src, join(scriptTmp, relative(ROOT, src))),
+    // Discovered suites can create and remove fixtures during this copy.
+    onFile: (src) => {
+      try {
+        copyFileSync(src, join(scriptTmp, relative(ROOT, src)));
+      } catch (err) {
+        if (err?.code !== 'ENOENT' || existsSync(src)) throw err;
+      }
+    },
   });
 
   mkdirSync(join(scriptTmp, 'data'), { recursive: true });
@@ -952,7 +960,11 @@ try {
     'utf-8'
   );
 
+  const scratchEnv = ownRootEnv();
+
   for (const script of scripts) {
+    // Let a pending interrupt land between synchronous child runs.
+    await new Promise((resolve) => setImmediate(resolve));
     const { name, allowFail, timeoutMs } = script;
     const parts = name.split(' ');
     const scriptFile = parts[0];
@@ -981,6 +993,11 @@ try {
       fail(`${name} declares an unusable timeoutMs (${String(timeoutMs)}) — must be a positive integer number of milliseconds`);
       continue;
     }
+    const expectExit = Object.hasOwn(script, 'expectExit') ? script.expectExit : 0;
+    if (!Number.isInteger(expectExit) || expectExit < 0) {
+      fail(`${name} declares an unusable expectExit (${String(expectExit)}) — must be a non-negative integer exit status`);
+      continue;
+    }
     const budgetMs = declared ? timeoutMs : DEFAULT_SCRIPT_TIMEOUT_MS;
     const startedAt = Date.now();
     // Spread rather than defaulted: `{ timeout: undefined }` reads to
@@ -988,6 +1005,7 @@ try {
     // a hung CI job. Absent means absent, so run()'s own default stands.
     const result = run(NODE, [join(scriptTmp, scriptFile), ...args], {
       cwd: scriptTmp,
+      env: scratchEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
       ...(declared ? { timeout: timeoutMs } : {}),
     });
@@ -1007,11 +1025,14 @@ try {
       warn(`${name} used ${(elapsedMs / 1000).toFixed(1)}s of its ${(budgetMs / 1000).toFixed(0)}s budget `
         + `(${Math.round((elapsedMs / budgetMs) * 100)}%) — it is passing, but it is close to being killed for time`);
     }
-    if (result !== null) {
-      pass(`${name} runs OK`);
-    } else if (allowFail && !crashedBeforeRunning(lastRunFailure())) {
-      warn(`${name} exited with error (expected without user data)`);
-    } else if (allowFail) {
+    const failure = result === null ? lastRunFailure() : null;
+    const status = result !== null ? 0 : (failure?.status ?? null);
+    const crashed = result === null && crashedBeforeRunning(failure);
+    if (status === expectExit && !crashed) {
+      pass(expectExit === 0 ? `${name} runs OK` : `${name} exits ${expectExit} as declared`);
+    } else if (allowFail && status !== null && !crashed) {
+      warn(`${name} exited ${status}, not the declared ${expectExit} (allowFail: its exit depends on user data)`);
+    } else if (allowFail && crashed) {
       // allowFail says "a non-zero exit is expected here", never "any outcome
       // is fine". A script that dies with an uncaught exception did not run at
       // all, and reporting that as the expected failure is how #3440 sat in
@@ -1023,7 +1044,7 @@ try {
       // Include the child's exit status and streams. Without them a CI-only
       // failure arrives as a bare `<name> crashed`: no stack, no assertion
       // text, no exit code, and nothing a reader can act on.
-      fail(`${name} crashed${formatRunFailure()}`);
+      fail(`${name} ${crashed || status === null ? 'crashed' : `exited ${status}, not the declared ${expectExit}`}${formatRunFailure()}`);
     }
   }
 
@@ -1033,6 +1054,7 @@ try {
   {
     const assessmentCli = (...argv) => spawnSync(NODE, [join(scriptTmp, 'assessment-log.mjs'), ...argv], {
       cwd: scriptTmp,
+      env: scratchEnv,
       encoding: 'utf-8',
       timeout: 30000,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -1087,7 +1109,7 @@ try {
   {
     const replyWatchCli = (...argv) => spawnSync(NODE, [join(scriptTmp, 'reply-watch.mjs'), ...argv], {
       cwd: scriptTmp,
-      env: { ...process.env, CAREER_OPS_ROOT: scriptTmp, CAREER_OPS_REPLY_CANDIDATES: '' },
+      env: ownRootEnv({ CAREER_OPS_ROOT: scriptTmp, CAREER_OPS_REPLY_CANDIDATES: '' }),
       encoding: 'utf-8',
       timeout: 30000,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -6975,7 +6997,6 @@ console.log('\n12. Skill symlink integrity');
 const canonicalSkill = '.agents/skills/career-ops/SKILL.md';
 const symlinks = [
   '.claude/skills/career-ops/SKILL.md',
-  '.cursor/skills/career-ops/SKILL.md',
   '.opencode/skills/career-ops/SKILL.md',
   '.qwen/skills/career-ops/SKILL.md',
   '.antigravitycli/skills/career-ops/SKILL.md',
@@ -12910,7 +12931,7 @@ try {
 // still exist before merge-tracker flips a matching ❌ cell to ✅.
 console.log('\n🧪 Testing merge-tracker PDF flag sync from data/pdf-index.tsv (#1429)...');
 try {
-  const runPdfSyncFixture = (name, trackerRow, pdfIndex = null, additions = []) => {
+  const runPdfSyncFixture = (name, trackerRow, pdfIndex = null, additions = [], missingPdfs = []) => {
     const tmp = mkdtempSync(join(tmpdir(), `career-ops-merge-pdf-${name}-`));
     mkdirSync(join(tmp, 'data'), { recursive: true });
     const additionsDir = join(tmp, 'additions');
@@ -12925,7 +12946,7 @@ try {
       // Manifest entries are valid only while the PDFs they name exist.
       for (const line of pdfIndex.trim().split(/\r?\n/).slice(1)) {
         const pdf = line.split('\t')[1];
-        if (!pdf) continue;
+        if (!pdf || missingPdfs.includes(pdf)) continue;
         mkdirSync(dirname(join(tmp, pdf)), { recursive: true });
         writeFileSync(join(tmp, pdf), '%PDF-1.4\n');
       }
@@ -12999,10 +13020,9 @@ try {
   }
 
   // A re-evaluation REPLACES the row's report link, and the PDF flag describes
-  // that report. Inheriting the old flag across the change carried the
-  // superseded report's ✅ onto a report with no PDF: the row then claimed a
-  // tailored CV exists, and the only PDF on disk belonged to the evaluation
-  // that had just been superseded (#2594).
+  // that report. An old checked cell and a stale manifest entry cannot make a
+  // new report appear to have a PDF when the indexed file is gone. A live old
+  // PDF is deliberately re-keyed to the new report (tested in merge-tracker.test.mjs).
   const reevalRow = '| 3 | 2026-01-04 | Acme | Backend Engineer, Payments | 4.5/5 | Evaluated | ✅ | [1](../reports/001-acme-2026-01-04.md) | first |';
   const reevalTsv = (n) => ({
     name: `00${n}-acme.tsv`,
@@ -13014,6 +13034,7 @@ try {
     reevalRow,
     '# report\tpdf\thtml\tformat\tdate\n1\toutput/acme-1.pdf\t\t\t2026-01-04\n',
     [reevalTsv(2)],
+    ['output/acme-1.pdf'],
   );
   const staleRow = staleFlag.merged.split('\n').find((l) => l.startsWith('| 3 ')) || '';
   if (staleFlag.result !== null && /\[2\]/.test(staleRow) && staleRow.split('|')[7].trim() === '❌') {
@@ -14059,7 +14080,9 @@ try {
     execFileSync('chmod', ['+x', join(batchDir, 'batch-runner.sh')]);
   }
   writeFileSync(join(tmp, 'merge-tracker.mjs'), 'console.log("merge fixture");\n');
+  writeFileSync(join(tmp, 'reconcile-pipeline.mjs'), 'console.log("reconcile fixture");\n');
   writeFileSync(join(tmp, 'verify-pipeline.mjs'), 'console.log("verify fixture");\n');
+  writeFileSync(join(tmp, 'reserve-report-num.mjs'), "if (!process.argv.includes('--release')) console.log('001');\n");
   writeFileSync(join(batchDir, 'batch-prompt.md'), 'URL={{URL}}\nJD={{JD_FILE}}\nREPORT={{REPORT_NUM}}\n');
   writeFileSync(join(batchDir, 'batch-input.tsv'), [
     'id\turl\tsource\tnotes',
@@ -14082,19 +14105,20 @@ try {
     execFileSync('chmod', ['+x', join(fakeBin, 'claude'), join(fakeBin, 'curl')]);
   }
 
-  const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}` };
+  const env = ownRootEnv({ PATH: `${fakeBin}${delimiter}${process.env.PATH}` });
   const out = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1', '--max-retries', '3', '--rate-limit-sleep', '0'], {
     cwd: tmp,
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
   }) || '';
+  const runFailure = formatRunFailure();
   const state = readFileSync(join(batchDir, 'batch-state.tsv'), 'utf-8').trim().split('\n');
   const first = state[1]?.split('\t') || [];
 
   if (state.length === 2 && first[0] === '1' && first[2] === 'paused_rate_limit' && first[8] === '0') {
     pass('session-limit pauses batch without consuming retry budget or scheduling more jobs');
   } else {
-    fail(`session-limit pause wrong: lines=${state.length}, first=${JSON.stringify(first)}, out=${JSON.stringify(out.slice(-240))}`);
+    fail(`session-limit pause wrong: lines=${state.length}, first=${JSON.stringify(first)}, out=${JSON.stringify(out.slice(-240))}${runFailure}`);
   }
 
   writeFileSync(join(batchDir, 'batch-state.tsv'), [
@@ -14314,7 +14338,9 @@ function makeTierFixture(profileYml) {
     execFileSync('chmod', ['+x', join(batchDir, 'batch-runner.sh')]);
   }
   writeFileSync(join(tmp, 'merge-tracker.mjs'), 'console.log("merge fixture");\n');
+  writeFileSync(join(tmp, 'reconcile-pipeline.mjs'), 'console.log("reconcile fixture");\n');
   writeFileSync(join(tmp, 'verify-pipeline.mjs'), 'console.log("verify fixture");\n');
+  writeFileSync(join(tmp, 'reserve-report-num.mjs'), "if (!process.argv.includes('--release')) console.log('001');\n");
   writeFileSync(join(batchDir, 'batch-prompt.md'), 'URL={{URL}}\nJD={{JD_FILE}}\nREPORT={{REPORT_NUM}}\n');
   writeFileSync(join(batchDir, 'batch-input.tsv'), [
     'id\turl\tsource\tnotes',
@@ -14341,13 +14367,14 @@ function makeTierFixture(profileYml) {
 try {
   const { tmp, batchDir, fakeBin } = makeTierFixture('spend_tier: economy\n');
   const argFile = join(tmp, 'claude-argv.txt');
-  const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: argFile };
+  const env = ownRootEnv({ PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: toBashPath(argFile) });
   const out = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
+  const runFailure = formatRunFailure();
   const argv = existsSync(argFile) ? readFileSync(argFile, 'utf-8') : '';
   if (argv.includes('--model') && argv.includes('claude-haiku-4-5') && out.includes('spend_tier=economy')) {
     pass('economy spend_tier resolves to claude-haiku-4-5');
   } else {
-    fail(`economy spend_tier did not route to haiku: argv=${JSON.stringify(argv)}, out=${JSON.stringify(out.slice(-240))}`);
+    fail(`economy spend_tier did not route to haiku: argv=${JSON.stringify(argv)}, out=${JSON.stringify(out.slice(-240))}${runFailure}`);
   }
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 } catch (e) { fail(`Batch spend_tier routing test crashed (economy): ${e.message}`); }
@@ -14356,13 +14383,14 @@ try {
 try {
   const { tmp, batchDir, fakeBin } = makeTierFixture('spend_tier: premium\n');
   const argFile = join(tmp, 'claude-argv.txt');
-  const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: argFile };
+  const env = ownRootEnv({ PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: toBashPath(argFile) });
   const premiumOut = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
+  const runFailure = formatRunFailure();
   const premiumArgv = existsSync(argFile) ? readFileSync(argFile, 'utf-8') : '';
   if (premiumArgv.includes('--model') && premiumArgv.includes('claude-opus-5-5') && premiumOut.includes('spend_tier=premium')) {
     pass('premium spend_tier resolves to claude-opus-5-5');
   } else {
-    fail(`premium spend_tier did not route to opus: argv=${JSON.stringify(premiumArgv)}, out=${JSON.stringify(premiumOut.slice(-240))}`);
+    fail(`premium spend_tier did not route to opus: argv=${JSON.stringify(premiumArgv)}, out=${JSON.stringify(premiumOut.slice(-240))}${runFailure}`);
   }
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 } catch (e) { fail(`Batch spend_tier routing test crashed (premium): ${e.message}`); }
@@ -14371,13 +14399,14 @@ try {
 try {
   const { tmp, batchDir, fakeBin } = makeTierFixture('spend_tier: premium\n');
   const argFile = join(tmp, 'claude-argv.txt');
-  const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: argFile };
+  const env = ownRootEnv({ PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: toBashPath(argFile) });
   const overrideOut = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1', '--model', 'claude-sonnet-5-5'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
+  const runFailure = formatRunFailure();
   const overrideArgv = existsSync(argFile) ? readFileSync(argFile, 'utf-8') : '';
   if (overrideArgv.includes('--model') && overrideArgv.includes('claude-sonnet-5-5') && !overrideArgv.includes('claude-opus-5-5') && overrideOut.includes('explicit --model override')) {
     pass('--model override takes precedence over spend_tier');
   } else {
-    fail(`--model override did not win: argv=${JSON.stringify(overrideArgv)}, out=${JSON.stringify(overrideOut.slice(-240))}`);
+    fail(`--model override did not win: argv=${JSON.stringify(overrideArgv)}, out=${JSON.stringify(overrideOut.slice(-240))}${runFailure}`);
   }
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 } catch (e) { fail(`Batch spend_tier routing test crashed (--model override): ${e.message}`); }
@@ -14386,13 +14415,14 @@ try {
 try {
   const { tmp, batchDir, fakeBin } = makeTierFixture('# no spend_tier key\nname: test\n');
   const argFile = join(tmp, 'claude-argv.txt');
-  const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: argFile };
+  const env = ownRootEnv({ PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: toBashPath(argFile) });
   const standardDefaultOut = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
+  const runFailure = formatRunFailure();
   const standardDefaultArgv = existsSync(argFile) ? readFileSync(argFile, 'utf-8') : '';
   if (standardDefaultArgv.includes('--model') && standardDefaultArgv.includes('claude-sonnet-5-5') && standardDefaultOut.includes('spend_tier=standard')) {
     pass('missing spend_tier key defaults to standard tier (claude-sonnet-5-5)');
   } else {
-    fail(`missing spend_tier did not default to standard: argv=${JSON.stringify(standardDefaultArgv)}, out=${JSON.stringify(standardDefaultOut.slice(-240))}`);
+    fail(`missing spend_tier did not default to standard: argv=${JSON.stringify(standardDefaultArgv)}, out=${JSON.stringify(standardDefaultOut.slice(-240))}${runFailure}`);
   }
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 } catch (e) { fail(`Batch spend_tier routing test crashed (missing key): ${e.message}`); }
@@ -14401,13 +14431,14 @@ try {
 try {
   const { tmp, batchDir, fakeBin } = makeTierFixture('spend_tier: turbo\n');
   const argFile = join(tmp, 'claude-argv.txt');
-  const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: argFile };
+  const env = ownRootEnv({ PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: toBashPath(argFile) });
   const invalidTierOut = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
+  const runFailure = formatRunFailure();
   const invalidTierArgv = existsSync(argFile) ? readFileSync(argFile, 'utf-8') : '';
   if (invalidTierArgv.includes('--model') && invalidTierArgv.includes('claude-sonnet-5-5') && invalidTierOut.includes('spend_tier=standard')) {
     pass('invalid spend_tier value falls back to standard tier (claude-sonnet-5-5)');
   } else {
-    fail(`invalid spend_tier did not fall back to standard: argv=${JSON.stringify(invalidTierArgv)}, out=${JSON.stringify(invalidTierOut.slice(-240))}`);
+    fail(`invalid spend_tier did not fall back to standard: argv=${JSON.stringify(invalidTierArgv)}, out=${JSON.stringify(invalidTierOut.slice(-240))}${runFailure}`);
   }
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 } catch (e) { fail(`Batch spend_tier routing test crashed (invalid value): ${e.message}`); }

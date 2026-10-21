@@ -5,6 +5,7 @@
 
 ### Bug Fixes
 
+* restore test-runner compatibility, Assessment controls, follow-up settings, CV rendering safeguards, and Windows batch paths after the system update ([#5](https://github.com/alireza7575/career-ops-germany/pull/5))
 * **ci:** handle upstream and fork release tag collisions ([ad5827a](https://github.com/alireza7575/career-ops-germany/commit/ad5827a406a0e8a6687584fd00df56c7a8508ded))
 * preserve funnel counts after Assessment stage update ([c0eae84](https://github.com/alireza7575/career-ops-germany/commit/c0eae845a807e3cb9f02797a185159fb6f3dc1d1))
 
