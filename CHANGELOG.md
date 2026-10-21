@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.36.1](https://github.com/alireza7575/career-ops-germany/compare/career-ops-v1.36.0...career-ops-v1.36.1) (2026-10-21)
+## [1.37.1](https://github.com/alireza7575/career-ops-germany/compare/career-ops-v1.36.0...career-ops-v1.37.1) (2026-10-21)
 
 
 ### Bug Fixes

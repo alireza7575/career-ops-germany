@@ -48,7 +48,8 @@ import { randomUUID } from 'node:crypto';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { readStyleTokens, injectThemeStyle, readCvSectionOrder } from './theme-style.mjs';
 import { validateCvExperienceOrder } from './cv-experience-order.mjs';
-import { resolvePdfIndexPath, resolveTrackerPath, resolveWorkspaceRootFor } from './tracker-utils.mjs';
+import { resolvePdfIndexPath, resolveTrackerPath, resolveWorkspaceRootFor, writeFileAtomic } from './tracker-utils.mjs';
+import { withPipelineLock } from './pipeline-lock.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { stripEmptyRenderedSections } from './cv-sections-core.mjs';
 import { PAGE_CSS_SIZE, PAGE_FORMATS, normalizePageFormat, resolvePageFormat } from './lib/page-format.mjs';
@@ -1391,31 +1392,32 @@ export function applyManifestRow(existingLines, row) {
  * gitignored: it references gitignored output/ artifacts and is meaningless on
  * another machine.
  */
-function updatePDFManifest(reportNum, pdfPath, htmlPath, format, kind) {
+async function updatePDFManifest(reportNum, pdfPath, htmlPath, format, kind) {
   const manifestPath = resolvePdfIndexPath(trackerPath);
   const toRel = (p) => relative(workspaceRoot, p).split(sep).join('/');
   const relPDF = toRel(pdfPath);
   const relHTML = workspaceRelativeManifestPath(htmlPath, workspaceRoot);
   const date = new Date().toISOString().slice(0, 10);
 
-  const existing = existsSync(manifestPath)
-    ? readFileSync(manifestPath, 'utf-8').split('\n')
-    : [];
-  const lines = applyManifestRow(existing, {
-    reportNum,
-    pdf: relPDF,
-    html: relHTML,
-    format,
-    date,
-    kind,
-  });
-
   mkdirSync(dirname(manifestPath), { recursive: true });
-  writeFileSync(
-    manifestPath,
-    '# report\tpdf\thtml\tformat\tdate\tkind - written by generate-pdf.mjs, do not edit\n' +
-      lines.join('\n') + '\n'
-  );
+  await withPipelineLock(manifestPath, () => {
+    const existing = existsSync(manifestPath)
+      ? readFileSync(manifestPath, 'utf-8').split('\n')
+      : [];
+    const lines = applyManifestRow(existing, {
+      reportNum,
+      pdf: relPDF,
+      html: relHTML,
+      format,
+      date,
+      kind,
+    });
+    writeFileAtomic(
+      manifestPath,
+      '# report\tpdf\thtml\tformat\tdate\tkind - written by generate-pdf.mjs, do not edit\n' +
+        lines.join('\n') + '\n'
+    );
+  });
   return relPDF;
 }
 
@@ -2107,7 +2109,7 @@ async function renderInPage(browser, html, outputPath, opts = {}) {
     console.log(`📦 Size: ${(pdfBuffer.length / 1024).toFixed(1)} KB`);
 
     try {
-      updatePDFManifest(reportNum, outputPath, inputPath, format, artifactKind);
+      await updatePDFManifest(reportNum, outputPath, inputPath, format, artifactKind);
       console.log(`🔗 Manifest: data/pdf-index.tsv updated${reportNum ? ` (report ${reportNum})` : ' (no --report given)'}`);
     } catch (err) {
       // The PDF itself succeeded — never fail the run over manifest bookkeeping.

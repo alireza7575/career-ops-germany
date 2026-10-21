@@ -52,15 +52,16 @@ import { readFileSync, existsSync, readdirSync, mkdtempSync, mkdirSync, writeFil
 // EPERM) with linear backoff when given maxRetries, so default it everywhere
 // rather than at ~95 individual call sites. An explicit option still wins.
 const rmSync = (target, opts = {}) => _rmSync(target, { maxRetries: 10, retryDelay: 100, ...opts });
-import { join, dirname, basename, delimiter } from 'path';
+import { join, dirname, basename, delimiter, relative } from 'path';
 import { tmpdir } from 'os';
 import { promisify } from 'util';
 import { fileURLToPath, pathToFileURL } from 'url';
 import * as yaml from 'js-yaml';
 import { pass, fail, warn, run, runAcrossUtcDay, runAcrossLocalDay, lastRunFailure, formatRunFailure, fileExists, finish, results, linkNodeModules, ROOT, QUICK, NODE, DEFAULT_SCRIPT_TIMEOUT_MS, getBash, toBashPath, hermeticGitEnv } from './tests/helpers.mjs';
 import { flagValue, hasFlag } from './lib/cli-flags.mjs';
-import { collectMjsFiles, isNestedCheckout, isUnderNestedCheckout } from './lib/mjs-files.mjs';
-import { SCRATCH_PREFIX, isScratchDir, markScratchOwner, sweepScratchDirs } from './lib/scratch-dirs.mjs';
+import { collectMjsFiles } from './lib/mjs-files.mjs';
+import { walkTree, listTree } from './lib/walk-tree.mjs';
+import { SCRATCH_PREFIX, markScratchOwner, sweepScratchDirs } from './lib/scratch-dirs.mjs';
 
 /**
  * Read a repo-relative text file as UTF-8.
@@ -104,35 +105,15 @@ const normalizeEol = (text) => text.replace(/\r\n/g, '\n');
 const readTextLF = (path) => normalizeEol(readFile(path));
 
 // ── Auto-discovered test files (issue #1440) ─────────────────────────────
-// Deterministic: recursive readdirSync with default lexicographic sort of
-// entry names — same order on every run and OS. No glob library, no
-// registration list. Discovery is limited to tests/ so root-level
+// Deterministic: listTree sorts entries by name on every run and OS.
+// Discovery is limited to tests/ so root-level
 // standalone *.test.mjs files are never picked up.
 const TESTS_DIR = join(ROOT, 'tests');
 
 function discoverTests(dir) {
-  const out = [];
-  const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  for (const entry of entries) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      // A worktree under tests/ is a second checkout of this repository, and
-      // this walker does not merely read what it finds — it hands the files to
-      // the runner. Without this guard a stale checkout's suites execute
-      // against the current tree and the run prints "safe to push/merge" for
-      // them (#3762). `git worktree add` accepts any path, so nothing but this
-      // check keeps one out. Tested on children only: TESTS_DIR is never itself
-      // a checkout root, and the root exemption in `collectMjsFiles` exists for
-      // a case that cannot arise here.
-      if (isNestedCheckout(full)) continue;
-      out.push(...discoverTests(full));
-    } else if (entry.name.endsWith('.test.mjs')
-      // This is a Playwright suite, run by the dedicated CV visual job. It is
-      // named .test.mjs for the repository convention, but node --test cannot
-      // execute Playwright's test registration API.
-      && full !== join(TESTS_DIR, 'cv-visual', 'cv-visual.test.mjs')) out.push(full);
-  }
-  return out;
+  // The CV visual suite uses Playwright's registration API, not node --test.
+  return listTree(dir, { match: /\.test\.mjs$/ })
+    .filter((f) => f !== join(TESTS_DIR, 'cv-visual', 'cv-visual.test.mjs'));
 }
 
 // Strip comment lines before grepping a discovered suite's source for a
@@ -528,56 +509,12 @@ try {
   // installed the web app's deps — copying it dominated this section (#2387).
   const EXCLUDE_AT_ANY_DEPTH = new Set(['node_modules', '.git']);
 
-  const copyDirSync = (src, dest, exclude = []) => {
-    const name = src.split(/[\\/]/).pop();
-    if (EXCLUDE_AT_ANY_DEPTH.has(name)) return;
-    // Everything else is a top-level workspace dir (data/, reports/, …) and is
-    // matched by basename ONLY at the repo root, so nested fixture subdirs such
-    // as test-fixtures/upgrade/state-*/data and .../reports still get copied.
-    if (dirname(src) === ROOT && exclude.includes(name)) return;
-    const stat = statSync(src);
-    // A leftover from an earlier interrupted run is not repository source, and
-    // copying one nests it inside this run's scratch — which is how #3940's
-    // `.tmp-script-test-OP9Bzd/.tmp-script-test-tBjFgy/…` came to exist. This
-    // run's OWN scratch is already excluded by name just above; what this adds
-    // is the stale one the startup sweep could not remove, and — since that
-    // sweep deliberately leaves a live run's directory alone — the one a
-    // concurrent run is writing into right now.
-    //
-    // Directories only, which is why this reads `stat` rather than sitting with
-    // the name-based exclusions above: the prefix can name a FILE too, and
-    // dropping a source file from the copy would make a script check pass by
-    // not running it.
-    //
-    // At any depth, deliberately, where sweepScratchDirs() looks only at the top
-    // level. The two are asymmetric because their costs are: skipping a
-    // directory that turns out to be someone's oddly-named fixture loses a copy
-    // nothing reads, while DELETING it loses their work. Cheap to over-skip,
-    // expensive to over-delete.
-    if (stat.isDirectory() && isScratchDir(name)) return;
-    if (stat.isDirectory()) {
-      // A linked worktree is a whole second checkout of this repo and carries a
-      // `.git` FILE, not a directory, so the name-based exclusion above never
-      // fires on one (#3499). Copying it doubles this section's copy cost and
-      // seeds the throwaway tree with a stale duplicate of every script.
-      // Skipped below the root ONLY: `src === ROOT` on the first call, and
-      // ROOT's own `.git` is legitimately a file when the suite is being run
-      // FROM a worktree — testing it there would copy nothing at all.
-      if (src !== ROOT && isNestedCheckout(src)) return;
-      mkdirSync(dest, { recursive: true });
-      for (const entry of readdirSync(src)) {
-        copyDirSync(join(src, entry), join(dest, entry), exclude);
-      }
-    } else {
-      copyFileSync(src, dest);
-    }
-  };
-
   const excludeDirs = [
     // node_modules and .git are not listed here — EXCLUDE_AT_ANY_DEPTH above
     // drops them wherever they occur, root included.
     'data',
     'reports',
+    'output',
     '.update-lock',
     '.career-ops-web',
     '.playwright-mcp',
@@ -588,10 +525,19 @@ try {
     'test_diff_utf8.patch',
     basename(scriptTmp),
   ];
-  copyDirSync(ROOT, scriptTmp, excludeDirs);
+  walkTree(ROOT, {
+    links: 'follow',
+    onError: 'throw',
+    skip: (entry, _dir, depth) => EXCLUDE_AT_ANY_DEPTH.has(entry.name)
+      // Root exclusions must not remove nested fixture data/reports.
+      || (depth === 0 && excludeDirs.includes(entry.name)),
+    onDir: (src) => mkdirSync(join(scriptTmp, relative(ROOT, src)), { recursive: true }),
+    onFile: (src) => copyFileSync(src, join(scriptTmp, relative(ROOT, src))),
+  });
 
   mkdirSync(join(scriptTmp, 'data'), { recursive: true });
   mkdirSync(join(scriptTmp, 'reports'), { recursive: true });
+  mkdirSync(join(scriptTmp, 'output'), { recursive: true });
   // The throwaway copy excludes user data, but these exact empty scaffolds are
   // system-owned updater files. Keep them in the fixture so the migration
   // check can validate every SYSTEM_PATHS entry without copying user content.
@@ -601,6 +547,7 @@ try {
     'data/.gitkeep',
     'data/offers/.gitkeep',
     'data/parser-output/.gitkeep',
+    'output/.gitkeep',
     'reports/.gitkeep',
   ]) {
     writeFileSync(join(scriptTmp, file), '', 'utf-8');
@@ -746,6 +693,7 @@ try {
   {
     const replyWatchCli = (...argv) => spawnSync(NODE, [join(scriptTmp, 'reply-watch.mjs'), ...argv], {
       cwd: scriptTmp,
+      env: { ...process.env, CAREER_OPS_ROOT: scriptTmp, CAREER_OPS_REPLY_CANDIDATES: '' },
       encoding: 'utf-8',
       timeout: 30000,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -1428,7 +1376,7 @@ try {
   const nonBambooPage = fakePage({ status: 200, finalUrl: URL, bodyText: '', applyControls: [] });
   nonBambooPage.reload = async () => { nonBambooReloadCalled = true; return { status: () => 200 }; };
   const nonBambooInsufficient = await checkUrlLiveness(nonBambooPage, URL);
-  if (nonBambooInsufficient.result === 'expired' && nonBambooInsufficient.code === 'insufficient_content' && !nonBambooReloadCalled) {
+  if (nonBambooInsufficient.result === 'uncertain' && nonBambooInsufficient.code === 'empty_page' && !nonBambooReloadCalled) {
     pass('the reload retry is scoped to BambooHR hosts only');
   } else {
     fail(`reload retry leaked to a non-BambooHR host: ${JSON.stringify(nonBambooInsufficient)}, reloadCalled=${nonBambooReloadCalled}`);
@@ -1686,12 +1634,12 @@ try {
 
     const mainDocPage = deadThirdParty(true);
     const mainDocDead = await checkUrlLiveness(mainDocPage, 'https://careers.example.com/jobs/1');
-    if (mainDocDead.result === 'uncertain' && mainDocDead.code === 'blocked_host' && mainDocPage.abortCount === 1) {
-      pass('a non-resolving MAIN DOCUMENT is aborted and still returns blocked_host');
+    if (mainDocDead.result === 'uncertain' && mainDocDead.code === 'dns_no_addresses' && mainDocPage.abortCount === 1) {
+      pass('a non-resolving MAIN DOCUMENT is aborted and returns dns_no_addresses');
     } else {
       fail(
         `main-document DNS failure handled wrongly: ${JSON.stringify(mainDocDead)}, ` +
-        `aborts=${mainDocPage.abortCount} (want uncertain/blocked_host, aborts 1)`
+        `aborts=${mainDocPage.abortCount} (want uncertain/dns_no_addresses, aborts 1)`
       );
     }
   } finally {
@@ -1895,7 +1843,6 @@ const systemFiles = [
   'modes/heuristics/recruiter-side.md',
   'templates/states.yml', 'templates/cv-template.html',
   '.claude/skills/career-ops/SKILL.md',
-  '.cursor/skills/career-ops/SKILL.md',
   '.opencode/skills/career-ops/SKILL.md',
   '.qwen/skills/career-ops/SKILL.md',
   '.antigravitycli/skills/career-ops/SKILL.md',
@@ -2417,13 +2364,13 @@ try {
   const insideHtmlPath = join(ROOT, 'templates', 'cv-template.html');
   const outsideHtmlPath = join(dirname(ROOT), 'outside-cv-template.html');
 
-  if (repoRelativeManifestPath(insideHtmlPath) === 'templates/cv-template.html') {
+  if (repoRelativeManifestPath(insideHtmlPath, ROOT) === 'templates/cv-template.html') {
     pass('PDF manifest records repo-local source HTML paths');
   } else {
     fail('PDF manifest does not normalize repo-local source HTML paths');
   }
 
-  if (repoRelativeManifestPath('') === '' && repoRelativeManifestPath(outsideHtmlPath) === '') {
+  if (repoRelativeManifestPath('', ROOT) === '' && repoRelativeManifestPath(outsideHtmlPath, ROOT) === '') {
     pass('PDF manifest leaves HTML column blank when source HTML is missing or outside the repo');
   } else {
     fail('PDF manifest mishandles missing or external source HTML paths');
@@ -3071,13 +3018,8 @@ if (shared.includes('_profile.md')) {
   // alone can't catch.
   const writingRefRe = /_shared\.md[^.\n]{0,40}(Voice DNA|Writing Style|Professional Writing)|(Voice DNA|Writing Style|Professional Writing)[^.\n]{0,40}_shared\.md/;
   const stale = [];
-  // `{ recursive: true }` descends on Node's side, so there is no per-directory
-  // decision to guard — a checkout under modes/ is filtered out of the RESULT
-  // instead. Verified: a worktree there made this check fail naming that other
-  // tree's file as a stale reference of ours (#3762).
-  const modeDocs = readdirSync(join(ROOT, 'modes'), { recursive: true })
-    .filter(p => typeof p === 'string' && p.endsWith('.md'))
-    .filter(p => !isUnderNestedCheckout(join(ROOT, 'modes'), p));
+  const modeDocs = listTree(join(ROOT, 'modes'), { match: /\.md$/ })
+    .map(p => relative(join(ROOT, 'modes'), p));
   for (const f of modeDocs) {
     const src = readFile(`modes/${f.split(/[\\/]/).join('/')}`);
     if (writingRefRe.test(src)) stale.push(f);
@@ -3497,10 +3439,9 @@ if (
 
   // 2. oferta.md carries the agency-licensing section with the agency-mediated
   //    trigger, registry pointer, tracker-note suggestion, and jurisdiction derivation
-  const alStart = ofertaMode.indexOf('Agency Licensing Check');
-  const alEnd = ofertaMode.indexOf('### Output format:', Math.max(alStart, 0));
-  const alSection = alStart >= 0 && alEnd > alStart ? ofertaMode.slice(alStart, alEnd) : '';
+  const alSection = readFile('modes/oferta-signals/10-agency-licensing-check.md');
   if (
+    ofertaMode.includes('modes/oferta-signals/10-agency-licensing-check.md') &&
     alSection.includes('templates/agency-licensing.yml') &&
     alSection.includes('agency-mediated') &&
     alSection.includes('"our client"') &&
@@ -3626,10 +3567,9 @@ if (
   // 2. oferta.md carries Signal 15 with both the presence-based (a) and
   //    corroborating-only (b) halves, the jurisdiction derivation mirroring
   //    the agency-licensing/immigration-status pattern, and the not-legal-advice note.
-  const asdStart = ofertaMode.indexOf('**15. AI-Screening Disclosure**');
-  const asdEnd = ofertaMode.indexOf('### Output format:', Math.max(asdStart, 0));
-  const asdSection = asdStart >= 0 && asdEnd > asdStart ? ofertaMode.slice(asdStart, asdEnd) : '';
+  const asdSection = readFile('modes/oferta-signals/15-ai-screening-disclosure.md');
   if (
+    ofertaMode.includes('modes/oferta-signals/15-ai-screening-disclosure.md') &&
     asdSection &&
     asdSection.includes('templates/jurisdiction-ai-screening-disclosure.yml') &&
     asdSection.includes('config/profile.yml') &&
@@ -3691,7 +3631,7 @@ if (
   // 6. Risk Summary row exists and follows the "activates automatically" pattern
   const riskSummarySection = ofertaMode.slice(
     ofertaMode.indexOf('## Risk Summary (after Block G)'),
-    ofertaMode.indexOf('Block format:')
+    ofertaMode.indexOf('Block format:', ofertaMode.indexOf('## Risk Summary (after Block G)'))
   );
   if (
     riskSummarySection.includes('AI-screening disclosure') &&
@@ -3759,10 +3699,9 @@ if (
   }
 
   // oferta.md carries the standalone, table-free range-width signal
-  const ptStart = ofertaMode.indexOf('Pay-Transparency Range-Width Check');
-  const ptEnd = ofertaMode.indexOf('### Output format:', Math.max(ptStart, 0));
-  const ptSection = ptStart >= 0 && ptEnd > ptStart ? ofertaMode.slice(ptStart, ptEnd) : '';
+  const ptSection = readFile('modes/oferta-signals/13-pay-transparency-range-width-check.md');
   if (
+    ofertaMode.includes('modes/oferta-signals/13-pay-transparency-range-width-check.md') &&
     ptSection &&
     !ptSection.includes('templates/pay-transparency.yml') &&
     !/13b/.test(ptSection) &&
@@ -3810,10 +3749,9 @@ if (
   //    and JD-hours-first normalization are preserved, and no staleness/
   //    carve-out-eligibility machinery (which existed only to support the
   //    now-deleted table comparison) remains.
-  const mwStart = ofertaMode.indexOf('**14. Minimum-Wage Lawyer Question**');
-  const mwEnd = ofertaMode.indexOf('### Output format:', Math.max(mwStart, 0));
-  const mwSection = mwStart >= 0 && mwEnd > mwStart ? ofertaMode.slice(mwStart, mwEnd) : '';
+  const mwSection = readFile('modes/oferta-signals/14-minimum-wage-lawyer-question.md');
   if (
+    ofertaMode.includes('modes/oferta-signals/14-minimum-wage-lawyer-question.md') &&
     mwSection &&
     !mwSection.includes('templates/minimum-wage.yml') &&
     mwSection.includes('NEVER from `config/profile.yml`') &&
@@ -3917,14 +3855,12 @@ if (
     }
   }
 
-  // 6. Signal-13 boundary check: signal 13 is the last numbered Block G
-  //    signal before "### Output format:", so slicing it for phrasing
-  //    checks elsewhere in this file must not accidentally swallow the
-  //    output-format section.
-  if (mwEnd > mwStart && mwStart >= 0) {
-    pass('signal-13 section boundary (start of signal 13 to "### Output format:") resolved correctly for slicing (#2280)');
+  // 6. The mode must link to the extracted signal checked above.
+  if (ofertaMode.includes('modes/oferta-signals/14-minimum-wage-lawyer-question.md')
+      && mwSection.startsWith('**14. Minimum-Wage Lawyer Question**')) {
+    pass('oferta links to the minimum-wage lawyer-question signal checked above (#2280)');
   } else {
-    fail('could not locate signal 14 ("**14. Minimum-Wage Lawyer Question**") or its end boundary in modes/oferta.md (#2280)');
+    fail('oferta does not link to the minimum-wage lawyer-question signal (#2280)');
   }
 }
 
@@ -12576,8 +12512,8 @@ try {
 
 // ── MERGE-TRACKER PDF FLAG SYNC (#1429) ─────────────────────────
 // generate-pdf.mjs can run after the tracker row already exists. The
-// gitignored data/pdf-index.tsv manifest is the source of truth that the row's
-// PDF was generated, so merge-tracker should flip only matching ❌ cells to ✅.
+// gitignored data/pdf-index.tsv manifest records generated PDFs; the file must
+// still exist before merge-tracker flips a matching ❌ cell to ✅.
 console.log('\n🧪 Testing merge-tracker PDF flag sync from data/pdf-index.tsv (#1429)...');
 try {
   const runPdfSyncFixture = (name, trackerRow, pdfIndex = null, additions = []) => {
@@ -12590,7 +12526,16 @@ try {
       '| # | Date | Company | Role | Score | Status | PDF | Report | Notes |\n' +
       '|---|------|---------|------|-------|--------|-----|--------|-------|\n' +
       trackerRow + '\n');
-    if (pdfIndex !== null) writeFileSync(join(tmp, 'data', 'pdf-index.tsv'), pdfIndex);
+    if (pdfIndex !== null) {
+      writeFileSync(join(tmp, 'data', 'pdf-index.tsv'), pdfIndex);
+      // Manifest entries are valid only while the PDFs they name exist.
+      for (const line of pdfIndex.trim().split(/\r?\n/).slice(1)) {
+        const pdf = line.split('\t')[1];
+        if (!pdf) continue;
+        mkdirSync(dirname(join(tmp, pdf)), { recursive: true });
+        writeFileSync(join(tmp, pdf), '%PDF-1.4\n');
+      }
+    }
     if (additions.length > 0) {
       mkdirSync(additionsDir, { recursive: true });
       for (const addition of additions) {
@@ -12600,7 +12545,7 @@ try {
 
     try {
     const result = run(NODE, ['merge-tracker.mjs'], {
-      env: { ...process.env, CAREER_OPS_TRACKER: tracker, CAREER_OPS_ADDITIONS: additionsDir },
+      env: { ...process.env, CAREER_OPS_ROOT: tmp, CAREER_OPS_TRACKER: tracker, CAREER_OPS_ADDITIONS: additionsDir },
     });
     const merged = readFileSync(tracker, 'utf-8');
     return { result, merged };
@@ -15903,21 +15848,12 @@ try {
     fail(`notion plugin parseScore broken: 4.2/5 -> ${notionParseScore?.('4.2/5')}, 5/5 -> ${notionParseScore?.('5/5')}`);
   }
 
-  // Recursively collect every .mjs under plugins/ (the deny-list must not be flat-only).
-  const allPluginMjs = [];
-  const walkMjs = (d) => {
-    for (const e of readdirSync(d, { withFileTypes: true })) {
-      const fp = join(d, e.name);
-      // NO nested-checkout guard here, deliberately — see the EXEMPT map in
-      // tests/mjs-files.test.mjs. This is a security scan over third-party
-      // code, so skipping a directory that carries a `.git` marker would let a
-      // plugin drop a `.git` file beside its sources and opt straight out of
-      // the deny-list. Same reasoning as plugins/_lock.mjs (#3762).
-      if (e.isDirectory()) walkMjs(fp);
-      else if (e.name.endsWith('.mjs')) allPluginMjs.push(fp);
-    }
-  };
-  walkMjs(join(ROOT, 'plugins'));
+  // Scan every .mjs under plugins/, including marked directories: third-party
+  // code must not opt out of this deny-list by planting a .git or scratch name.
+  const allPluginMjs = listTree(join(ROOT, 'plugins'), {
+    match: /\.mjs$/,
+    allowNestedCheckouts: true,
+  });
   const dangerRe = /(?:from|import\(|require\(\s*)['"](?:node:)?(?:child_process|playwright)['"]/;
   const offenders = allPluginMjs.filter(f => dangerRe.test(readFileSync(f, 'utf8'))).map(f => f.replace(ROOT + '/', ''));
   if (offenders.length === 0) pass('no bundled plugin imports child_process/playwright, recursively (no-spawn / HITL guard)');
@@ -16829,14 +16765,9 @@ try {
       let webUnits = [];
       try {
         const webLibRoot = join(ROOT, 'web', 'tests', 'lib');
-        webUnits = readdirSync(webLibRoot, { recursive: true })
-          .filter((f) => f.endsWith('.test.mjs'))
-          // A checkout under web/tests/lib holds another tree's suites; the
-          // parity walk below skips those the same way (#3762), so the gate
-          // must not run them.
-          .filter((f) => !isUnderNestedCheckout(webLibRoot, f))
+        webUnits = listTree(webLibRoot, { match: /\.test\.mjs$/ })
           .sort()
-          .map((f) => join('web', 'tests', 'lib', f));
+          .map((f) => relative(ROOT, f));
       } catch (err) {
         // Fail rather than throw to the outer catch, which would skip every value
         // assertion below while reporting only "freeze section crashed".
@@ -16879,16 +16810,10 @@ try {
       // sides, so this cannot rot into a stale list of its own.
       try {
         const webTestsRoot = join(ROOT, 'web', 'tests');
-        const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-          const p = join(dir, e.name);
-          // A checkout under web/tests/ holds another tree's suites; reporting
-          // them as ungated web suites is a false failure (#3762).
-          if (e.isDirectory()) return isNestedCheckout(p) ? [] : walk(p);
-          return e.isFile() && e.name.endsWith('.test.mjs') ? [p] : [];
-        });
         if (existsSync(webTestsRoot)) {
           const gated = new Set(webUnits.map((f) => join(ROOT, f)));
-          const ungated = walk(webTestsRoot).filter((f) => !gated.has(f)).sort();
+          const ungated = listTree(webTestsRoot, { match: /\.test\.mjs$/ })
+            .filter((f) => !gated.has(f)).sort();
           if (ungated.length === 0) {
             pass(`every web suite is gated by the required check (${webUnits.length} discovered)`);
           } else {
@@ -18651,10 +18576,9 @@ console.log('\n68. Immigration-status requirement overreach (#2033)');
   //    rule, never-auto-answer guarantees).
   const ofertaNow = readFile('modes/oferta.md');
   const applyNow = readFile('modes/apply.md');
-  const sigStart = ofertaNow.indexOf('**11. Immigration-Status Requirement Overreach**');
-  const sigEnd = ofertaNow.indexOf('### Output format:', Math.max(sigStart, 0));
-  const sigSection = sigStart >= 0 && sigEnd > sigStart ? ofertaNow.slice(sigStart, sigEnd) : '';
+  const sigSection = readFile('modes/oferta-signals/11-immigration-status-requirement-overreach.md');
   if (
+    ofertaNow.includes('modes/oferta-signals/11-immigration-status-requirement-overreach.md') &&
     sigSection.includes('templates/immigration-status-requirements.yml') &&
     sigSection.includes('config/profile.yml') &&
     sigSection.includes('this signal is not evaluated; say nothing') &&
@@ -18749,12 +18673,13 @@ console.log('\n69. Jurisdiction-prohibited content signal (#2018)');
     fail(`templates/jurisdiction-prohibited-content.yml failed to load/parse as YAML: ${e.message} (#2018)`);
   }
 
+  const prohibitedSignal = readFile('modes/oferta-signals/12-jurisdiction-prohibited-content.md');
   if (
-    ofertaMode.includes('**12. Jurisdiction-Prohibited Content**') &&
-    ofertaMode.includes('templates/jurisdiction-prohibited-content.yml') &&
-    ofertaMode.includes('⚠️ **Jurisdiction-prohibited content signal:**') &&
-    ofertaMode.includes('not legal advice') &&
-    ofertaMode.includes('never naive keyword matching')
+    ofertaMode.includes('modes/oferta-signals/12-jurisdiction-prohibited-content.md') &&
+    prohibitedSignal.includes('templates/jurisdiction-prohibited-content.yml') &&
+    prohibitedSignal.includes('⚠️ **Jurisdiction-prohibited content signal:**') &&
+    prohibitedSignal.includes('not legal advice') &&
+    prohibitedSignal.includes('never naive keyword matching')
   ) {
     pass('oferta Block G signal 10 reads the jurisdiction table with agent-judged matching and a not-legal-advice note (#2018)');
   } else {
@@ -18776,10 +18701,7 @@ console.log('\n69. Jurisdiction-prohibited content signal (#2018)');
   // Phrasing discipline (#2018): the new mode text states verifiable facts about
   // the posting/form only. Outside the explicit "never assert ..." guidance
   // sentence, the new sections must not contain employer-lawbreaking language.
-  const signal9 = ofertaMode.slice(
-    ofertaMode.indexOf('**12. Jurisdiction-Prohibited Content**'),
-    ofertaMode.indexOf('**13. Pay-Transparency Range-Width Check**')
-  );
+  const signal9 = prohibitedSignal;
   const step5c = applyMode.slice(
     applyMode.indexOf('## Step 5c — Jurisdiction-prohibited content check'),
     applyMode.indexOf('**Applying to several roles')

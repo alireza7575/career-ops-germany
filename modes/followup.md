@@ -38,7 +38,7 @@ Parse the JSON output. It contains:
 
 Only use `entries` returned by the cadence script for reminders and drafts. Scope applies before pinned dates: `off` means no reminders; `interviews` includes only applications whose normalized status is Interview. Existing follow-up history stays intact. If scope is `off`, say reminders are turned off and stop this mode. If scope is `interviews` and no entries remain, say no interviews currently need a follow-up and stop. Otherwise, if no entries remain, say no active applications currently need a follow-up and stop.
 
-**Calibration cross-reference:** `node funnel-velocity.mjs --summary` reports which in-flight applications sit beyond the typical first-response window (its `waiting` block). Use those rows only as context when they also appear in the scoped cadence `entries`; they cannot add reminders outside the selected scope. Silence past the window is common, not a rejection. When the user reports a status change here ("they replied", "rejected"), route it through `node set-status.mjs <report#> <state>` and pass `--on YYYY-MM-DD` when they name the real event day.
+**Calibration cross-reference:** `node funnel-velocity.mjs --summary` reports which in-flight applications sit beyond the typical first-response window (its `waiting` block). Use those rows only as context when they also appear in the scoped cadence `entries`; they cannot add reminders outside the selected scope. Silence past the window is common, not a rejection. When the user reports a status change here ("they replied", "rejected"), route it through `node set-status.mjs --report <report#> <state>` and pass `--on YYYY-MM-DD` when they name the real event day.
 
 ## Step 1b — Employer Response-Latency Check
 

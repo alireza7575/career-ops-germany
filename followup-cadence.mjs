@@ -48,7 +48,8 @@ const appliedDaysRaw = flagValue(args, '--applied-days');
 // effect can be asserted directly, rather than only "the CLI didn't error".
 const APPLIED_DAYS_RE = /^\d+$/;
 export function parseAppliedDaysOverride(raw) {
-  return raw !== undefined && APPLIED_DAYS_RE.test(raw) ? parseInt(raw, 10) : null;
+  const parsed = Number(raw);
+  return raw !== undefined && APPLIED_DAYS_RE.test(raw) && Number.isSafeInteger(parsed) ? parsed : null;
 }
 const appliedDaysOverride = parseAppliedDaysOverride(appliedDaysRaw);
 
@@ -73,8 +74,18 @@ const PROFILE_CADENCE_KEYS = {
 };
 
 function positiveInteger(value) {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  if (typeof value !== 'number' && (typeof value !== 'string' || !/^\s*\+?\d+\s*$/.test(value))) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+export function loadFollowupsEnabled(profilePath = PROFILE_FILE) {
+  if (!profilePath || !existsSync(profilePath)) return true;
+  try {
+    return yaml.load(readFileSync(profilePath, 'utf-8'))?.follow_ups?.enabled !== false;
+  } catch {
+    return true;
+  }
 }
 
 export function loadProfileCadence(profilePath = PROFILE_FILE) {
@@ -837,7 +848,14 @@ export function analyzeFromContent(trackerContent, followupsContent = '', { scop
     // state where a consumer cannot do without it: on a first run the web
     // cadence form has no profile overrides to fall back on either, so
     // withholding it renders six empty fields with nothing to type back in.
-    return { error: 'No applications found in tracker.', cadenceDefaults: DEFAULT_CADENCE, cadenceConfig: CADENCE };
+    return {
+      error: 'No applications found in tracker.',
+      noData: true,
+      entries: [],
+      metadata: { analysisDate: localToday(), totalTracked: 0, actionable: 0, overdue: 0, urgent: 0, cold: 0, waiting: 0, retired: 0 },
+      cadenceDefaults: DEFAULT_CADENCE,
+      cadenceConfig: CADENCE,
+    };
   }
 
   const followups = parseFollowups(followupsContent);
@@ -976,12 +994,19 @@ export function analyzeFromContent(trackerContent, followupsContent = '', { scop
 // --- Main analysis (disk-backed CLI entry point) ---
 function analyze() {
   const trackerContent = existsSync(APPS_FILE) ? readFileSync(APPS_FILE, 'utf-8') : '';
+  if (!loadFollowupsEnabled()) {
+    return { ...analyzeFromContent(trackerContent, '', { scope: 'off' }), followupsEnabled: false };
+  }
   const followupsContent = existsSync(FOLLOWUPS_FILE) ? readFileSync(FOLLOWUPS_FILE, 'utf-8') : '';
   return analyzeFromContent(trackerContent, followupsContent);
 }
 
 // --- Summary mode ---
 function printSummary(result) {
+  if (result.followupsEnabled === false) {
+    console.log('Follow-ups are turned off (follow_ups.enabled: false in config/profile.yml).');
+    return;
+  }
   if (result.error) {
     console.log(`\n${result.error}\n`);
     return;
@@ -1080,5 +1105,5 @@ if (isMainModule(import.meta.url)) {
     console.log(JSON.stringify(result, null, 2));
   }
 
-  if (result.error) process.exit(1);
+  if (result.error && !result.noData) process.exit(1);
 }
