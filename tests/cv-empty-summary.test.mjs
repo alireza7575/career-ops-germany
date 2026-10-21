@@ -80,3 +80,10 @@ test('a numeric summary renders its value, like any other scalar field', () => {
   assert.match(render(payload(2026)), /<div class="summary-text">2026<\/div>/);
   assert.match(render(payload(0)), /<div class="summary-text">0<\/div>/);
 });
+
+test('a custom template without a marker after summary keeps its closing HTML', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cv-summary-template-'));
+  const template = join(dir, 'custom.html');
+  writeFileSync(template, '<html><body><!-- PROFESSIONAL SUMMARY --><div>{{SUMMARY_TEXT}}</div></body></html>');
+  assert.match(render(payload(''), template), /<\/body><\/html>$/);
+});

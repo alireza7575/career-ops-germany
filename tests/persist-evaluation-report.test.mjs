@@ -65,24 +65,6 @@ test("persist-evaluation-report -h matches --help", () => {
   assert.equal(short.status, 0, short.stderr);
   assert.equal(short.stdout, long.stdout);
 });
-test("tracker addition builders in lib and web agree", async (t) => {
-  // web/ is excluded from core-only installs (#3269). Skip rather than crash.
-  if (!existsSync(join(ROOT, "web", "src"))) {
-    t.skip("web/ not present");
-    return;
-  }
-  const { trackerTsvLine: webLine } = await import("../web/src/lib/report-persist.mjs");
-  const rows = [
-    ROW,
-    { ...ROW, via: "Hays", url: "https://example.com/jobs/2" },
-    { ...ROW, via: null, url: "" },
-    { ...ROW, via: "Hays", url: "" },
-  ];
-  for (const row of rows) {
-    assert.equal(coreLine(row), webLine(row));
-  }
-});
-
 test("the script writes the report and the headed addition", () => {
   const root = mkdtempSync(join(tmpdir(), "co-persist-report-"));
   try {

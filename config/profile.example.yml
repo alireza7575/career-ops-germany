@@ -2,6 +2,10 @@
 # Copy this file to config/profile.yml and fill in your details.
 # This is the single source of truth for your personal data across all modes.
 
+# Rename supported interactive sessions to the role and company being handled.
+# Set false to keep the current session title.
+session_title: true
+
 candidate:
   full_name: "Jane Smith"
   # Optional. Professional headline shown directly under the name on the CV

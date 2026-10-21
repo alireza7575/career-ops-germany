@@ -48,7 +48,8 @@ import { randomUUID } from 'node:crypto';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { readStyleTokens, injectThemeStyle, readCvSectionOrder } from './theme-style.mjs';
 import { validateCvExperienceOrder } from './cv-experience-order.mjs';
-import { resolvePdfIndexPath, resolveTrackerPath, resolveWorkspaceRootFor } from './tracker-utils.mjs';
+import { resolvePdfIndexPath, resolveTrackerPath, resolveWorkspaceRootFor, writeFileAtomic } from './tracker-utils.mjs';
+import { withPipelineLock } from './pipeline-lock.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { stripEmptyRenderedSections } from './cv-sections-core.mjs';
 import { PAGE_CSS_SIZE, PAGE_FORMATS, normalizePageFormat, resolvePageFormat } from './lib/page-format.mjs';
@@ -266,7 +267,11 @@ function normalizeTextForATS(html) {
     t = t.replace(/\s*\u2190\s*/g, () => { bump('left-arrow', 1); return ' from '; });
     t = t.replace(/\s*[\u2191\u2193]\s*/g, () => { bump('vert-arrow', 1); return ' '; });
     // Middle dot and bullet glyphs garble in some extractors \u2014 replace with pipe.
-    t = t.replace(/\s*\u00B7\s*/g, () => { bump('middot', 1); return ' | '; });
+    t = t.replace(/([lL])\u00B7(?=[lL])|\s*\u00B7\s*/g, (match, ela) => {
+      if (ela) return match; // Catalan l·l is a letter pair, not a separator.
+      bump('middot', 1);
+      return ' | ';
+    });
     t = t.replace(/\s*\u2022\s*/g, () => { bump('bullet', 1); return ' | '; });
     // Currency symbols sometimes stripped by font-subsetted PDFs \u2014 spell out
     // the unambiguous ones. \u00A5 is intentionally NOT converted: it maps to both
@@ -1391,31 +1396,32 @@ export function applyManifestRow(existingLines, row) {
  * gitignored: it references gitignored output/ artifacts and is meaningless on
  * another machine.
  */
-function updatePDFManifest(reportNum, pdfPath, htmlPath, format, kind) {
+async function updatePDFManifest(reportNum, pdfPath, htmlPath, format, kind) {
   const manifestPath = resolvePdfIndexPath(trackerPath);
   const toRel = (p) => relative(workspaceRoot, p).split(sep).join('/');
   const relPDF = toRel(pdfPath);
   const relHTML = workspaceRelativeManifestPath(htmlPath, workspaceRoot);
   const date = new Date().toISOString().slice(0, 10);
 
-  const existing = existsSync(manifestPath)
-    ? readFileSync(manifestPath, 'utf-8').split('\n')
-    : [];
-  const lines = applyManifestRow(existing, {
-    reportNum,
-    pdf: relPDF,
-    html: relHTML,
-    format,
-    date,
-    kind,
-  });
-
   mkdirSync(dirname(manifestPath), { recursive: true });
-  writeFileSync(
-    manifestPath,
-    '# report\tpdf\thtml\tformat\tdate\tkind - written by generate-pdf.mjs, do not edit\n' +
-      lines.join('\n') + '\n'
-  );
+  await withPipelineLock(manifestPath, () => {
+    const existing = existsSync(manifestPath)
+      ? readFileSync(manifestPath, 'utf-8').split('\n')
+      : [];
+    const lines = applyManifestRow(existing, {
+      reportNum,
+      pdf: relPDF,
+      html: relHTML,
+      format,
+      date,
+      kind,
+    });
+    writeFileAtomic(
+      manifestPath,
+      '# report\tpdf\thtml\tformat\tdate\tkind - written by generate-pdf.mjs, do not edit\n' +
+        lines.join('\n') + '\n'
+    );
+  });
   return relPDF;
 }
 
@@ -1544,7 +1550,7 @@ async function generatePDF() {
       console.error('--kind is not valid with --batch. Set "kind" per entry in the manifest instead.');
       process.exit(1);
     }
-    return runBatchFromManifest(batchManifestPath, { format, maxPages, strictPages, allowReorder, allowNonChronological });
+    return runBatchFromManifest(batchManifestPath, { format, maxPages, strictPages, allowReorder, allowNonChronological, skipFactCheck });
   }
 
   if (!inputPath || !outputPath) {
@@ -1636,29 +1642,7 @@ async function generatePDF() {
   // as an instructed step in the mode prompts — so a programmatic caller (a
   // bridge, a script, a batch run) rendered inflated metrics in silence. Gate the
   // normalized HTML, which is the document that actually prints.
-  if (!skipFactCheck && cvMarkdown) {
-    // Imported lazily, INSIDE the guard. A static import is resolved at module
-    // load whether or not this branch runs, and the page-budget/batch suites copy
-    // generate-pdf.mjs alone into a temp workspace — a static import of a sibling
-    // that isn't copied made every one of those suites die with
-    // ERR_MODULE_NOT_FOUND before reaching the behaviour under test. Those
-    // fixtures also ship no cv.md, so this branch is never entered there. If the
-    // module is genuinely missing in a real workspace this throws and the render
-    // fails, which is the correct direction to fail for a fact gate.
-    const { assertFacts } = await import('./verify-cv-facts.mjs');
-    const factCheck = assertFacts(html, { label: basename(inputPath) });
-    // Ahead of the verdict, because it qualifies it: with no config the phrase
-    // lists are empty, so a "passed" below covers metrics and facts only.
-    if (factCheck.configMissing) {
-      console.warn('⚠️  No config/cv-facts.json — forbidden/advisory phrase checks did not run.');
-    }
-    if (factCheck.verdict === 'warn') {
-      console.warn(`⚠️  CV fact check warning: ${basename(inputPath)}`);
-      for (const phrase of factCheck.warnings) console.warn(`  - advisory phrase: ${phrase}`);
-    } else {
-      console.log('✅ Fact check passed');
-    }
-  }
+  if (!skipFactCheck && cvMarkdown) await checkCvFacts(html, inputPath);
 
   return renderHtmlToPdf(html, outputPath, {
     format,
@@ -1670,6 +1654,21 @@ async function generatePDF() {
     strictPages,
     styleTokens: readStyleTokens(resolve(workspaceRoot, 'config', 'profile.yml')),
   });
+}
+
+async function checkCvFacts(html, inputPath) {
+  // Load only when a workspace CV exists; isolated renderers need no fact checker.
+  const { assertFacts } = await import('./verify-cv-facts.mjs');
+  const factCheck = assertFacts(html, { label: basename(inputPath) });
+  if (factCheck.configMissing) {
+    console.warn('⚠️  No config/cv-facts.json — forbidden/advisory phrase checks did not run.');
+  }
+  if (factCheck.verdict === 'warn') {
+    console.warn(`⚠️  CV fact check warning: ${basename(inputPath)}`);
+    for (const phrase of factCheck.warnings) console.warn(`  - advisory phrase: ${phrase}`);
+  } else {
+    console.log('✅ Fact check passed');
+  }
 }
 
 /**
@@ -1688,7 +1687,7 @@ async function generatePDF() {
  * for success; it exits zero only when every document rendered.
  *
  * @param {string} manifestPath - Path to the JSON manifest.
- * @param {{format: string, maxPages: number, strictPages: boolean, allowReorder: boolean, allowNonChronological: boolean}} globals
+ * @param {{format: string, maxPages: number, strictPages: boolean, allowReorder: boolean, allowNonChronological: boolean, skipFactCheck: boolean}} globals
  * @returns {Promise<{ok: number, failed: number, results: Array}>}
  */
 async function runBatchFromManifest(manifestPath, globals) {
@@ -1802,6 +1801,7 @@ async function runBatchFromManifest(manifestPath, globals) {
       validateCvSectionOrder(html, cvMarkdown, { allowReorder: globals.allowReorder });
       validateCvExperienceOrder(html, { allowNonChronological: globals.allowNonChronological });
       html = normalizeTextForATS(html).html;
+      if (!globals.skipFactCheck && cvMarkdown) await checkCvFacts(html, entryInput);
 
       entries.push({
         _idx: i,
@@ -2107,7 +2107,7 @@ async function renderInPage(browser, html, outputPath, opts = {}) {
     console.log(`📦 Size: ${(pdfBuffer.length / 1024).toFixed(1)} KB`);
 
     try {
-      updatePDFManifest(reportNum, outputPath, inputPath, format, artifactKind);
+      await updatePDFManifest(reportNum, outputPath, inputPath, format, artifactKind);
       console.log(`🔗 Manifest: data/pdf-index.tsv updated${reportNum ? ` (report ${reportNum})` : ' (no --report given)'}`);
     } catch (err) {
       // The PDF itself succeeded — never fail the run over manifest bookkeeping.

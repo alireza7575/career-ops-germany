@@ -38,7 +38,6 @@ const APPS_FILE = resolveTrackerPath(DATA_ROOT);
 const SCAN_HISTORY_FILE = join(DATA_ROOT, 'data', 'scan-history.tsv');
 const FOLLOWUPS_FILE = join(DATA_ROOT, 'data', 'follow-ups.md');
 const SCAN_RUNS_FILE = join(DATA_ROOT, 'data', 'scan-runs.tsv');
-const STATUS_LOG_FILE = join(DATA_ROOT, 'data', 'status-log.tsv');
 const PORTALS_FILE = join(DATA_ROOT, 'portals.yml');
 const PORTAL_HEALTH_FILE = join(DATA_ROOT, 'data', 'portal-health.tsv');
 
@@ -618,7 +617,7 @@ export function computeAllStats({
   scanRunsFile = SCAN_RUNS_FILE,
   portalsFile = PORTALS_FILE,
   portalHealthFile = PORTAL_HEALTH_FILE,
-  statusLogFile = STATUS_LOG_FILE,
+  statusLogFile = join(dirname(appsFile), 'status-log.tsv'),
   prune = false,
 } = {}) {
   const read = (f) => (existsSync(f) ? readFileSync(f, 'utf-8') : null);

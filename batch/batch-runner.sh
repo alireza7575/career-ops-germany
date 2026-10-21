@@ -54,15 +54,20 @@ if [[ -f "$PROJECT_DIR/path-resolver.mjs" ]]; then
     DATA_ROOT="$resolved_data_root"
   fi
 fi
+# Native Node needs C:/... paths, while Git Bash utilities need /c/... paths.
+BASH_DATA_ROOT="$DATA_ROOT"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && BASH_DATA_ROOT="$(cygpath -u "$DATA_ROOT")" ;;
+esac
 BATCH_DIR="$SCRIPT_DIR"
 INPUT_FILE="$BATCH_DIR/batch-input.tsv"
 STATE_FILE="$BATCH_DIR/batch-state.tsv"
 PROMPT_FILE="$BATCH_DIR/batch-prompt.md"
-PROFILE_FILE="$DATA_ROOT/config/profile.yml"
+PROFILE_FILE="$BASH_DATA_ROOT/config/profile.yml"
 LOGS_DIR="$BATCH_DIR/logs"
 DISCARD_LOG="$LOGS_DIR/discard.log"
-TRACKER_DIR="$DATA_ROOT/batch/tracker-additions"
-REPORTS_DIR="$DATA_ROOT/reports"
+TRACKER_DIR="$BASH_DATA_ROOT/batch/tracker-additions"
+REPORTS_DIR="$BASH_DATA_ROOT/reports"
 # The runner's own bookkeeping (input, state, logs, locks) stays beside the
 # script. reserve-report-num.mjs and merge-tracker.mjs default batch-state.tsv
 # to the data root, where this runner never writes it, so name the real file
@@ -934,7 +939,7 @@ process_offer() {
   # does — cannot read anything outside the project. Honouring TMPDIR here would
   # re-open that hole whenever TMPDIR is the usual /tmp. mktemp still randomizes
   # the name, so the symlink-guessability property above is unchanged.
-  local jd_tmp_dir="$PROJECT_DIR/batch/tmp"
+  local jd_tmp_dir="$BATCH_DIR/tmp"
   mkdir -p "$jd_tmp_dir"
   local jd_file
   jd_file="$(mktemp "$jd_tmp_dir/batch-jd-${id}.XXXXXX")"
@@ -1145,11 +1150,11 @@ process_offer() {
   # Inject user-layer personalization into the temporary worker prompt.
   # The resolved prompt is gitignored runtime state, so user profile data stays
   # out of the system layer while batch scoring matches interactive scoring.
-  for context_file in "$DATA_ROOT/modes/_profile.md" "$DATA_ROOT/config/profile.yml" "$DATA_ROOT/modes/_custom.md"; do
+  for context_file in "$BASH_DATA_ROOT/modes/_profile.md" "$BASH_DATA_ROOT/config/profile.yml" "$BASH_DATA_ROOT/modes/_custom.md"; do
     if [[ -f "$context_file" ]]; then
       {
         printf '\n\n---\n\n'
-        printf '## Runtime personalization: %s\n\n' "${context_file#"$DATA_ROOT/"}"
+        printf '## Runtime personalization: %s\n\n' "${context_file#"$BASH_DATA_ROOT/"}"
         sed 's/^/    /' "$context_file"
         printf '\n'
       } >> "$resolved_prompt"

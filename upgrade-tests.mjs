@@ -7,10 +7,11 @@
  * the target updater, so this exercises the PR's own migration code.
  *
  * Hermetic: a temp GIT_CONFIG_GLOBAL rewrites the canonical GitHub URL to a
- * local bare mirror whose `main` ref is forced to the commit under test.
- * `apply` is pure git (curl lives only in check()), verified by spike
- * 2026-07-17. Oracle is blob equality on a changed system file — never
- * VERSION (apply has no version gate; equal-VERSION content drift is normal).
+ * local bare mirror whose `main` ref is forced to the commit under test. A
+ * child-process preload answers the updater's ref-API curl with that mirror's
+ * SHA and blocks other curl requests. Oracle is blob equality on a changed
+ * system file — never VERSION (apply has no version gate; equal-VERSION
+ * content drift is normal).
  *
  * Usage:
  *   node upgrade-tests.mjs --pr-gate     # newest old tag -> HEAD, one leg per
@@ -65,10 +66,22 @@ function buildMirror(work, targetSha) {
   return mirror;
 }
 
-function writeGitConfig(work, mirror) {
+export function writeGitConfig(work, mirror) {
   const cfg = join(work, 'gitconfig');
   const url = pathToFileURL(mirror).href;
   writeFileSync(cfg, `[user]\n\tname = upgrade-tests\n\temail = upgrade-tests@career-ops.test\n[url "${url}"]\n\tinsteadOf = ${CANONICAL}\n\tinsteadOf = ${CANONICAL_LEGACY}\n[safe]\n\tdirectory = *\n`);
+  writeFileSync(join(work, 'ref-api-stub.mjs'), `import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+const realExecFile = childProcess.execFile;
+childProcess.execFile = (file, args, options, callback) => {
+  if (file !== 'curl') return realExecFile(file, args, options, callback);
+  const expected = 'https://api.github.com/repos/career-ops-hq/career-ops/git/ref/heads/main';
+  const matches = args.at(-1) === expected;
+  queueMicrotask(() => callback(matches ? null : new Error('Unexpected curl in upgrade harness'),
+    matches ? JSON.stringify({ object: { sha: process.env.CAREER_OPS_TEST_REF_SHA } }) : '', ''));
+};
+syncBuiltinESMExports();
+`);
   return cfg;
 }
 
@@ -81,30 +94,16 @@ function writeGitConfig(work, mirror) {
  *  applies at higher precedence than every config file. Either can rewrite a
  *  URL out from under the mirror, and the failure looks like a real regression
  *  rather than a poisoned harness. Close both. */
-function hermeticEnv(cfg) {
+export function hermeticEnv(cfg, targetSha) {
   return {
     ...process.env,
     GIT_CONFIG_GLOBAL: cfg,
     GIT_CONFIG_NOSYSTEM: '1',
     GIT_CONFIG_COUNT: '0',
-    // Hermeticity is not only a git concern. #3845 made apply() resolve its
-    // target through resolveTargetRef(), whose default 'release' channel
-    // curls RELEASES_API. The redirects above rewrite git URLs onto the local
-    // mirror and do nothing to a raw curl, so that call reaches the real
-    // api.github.com and apply upgrades to whatever the live newest release
-    // happens to be.
-    //
-    // Between releases that tag IS newestAncestorTag(), so the leg becomes a
-    // no-op ("Update complete: vX → vX"), nothing is written, and the
-    // non-vacuity oracle fails while naming whichever SYSTEM_PATHS file the PR
-    // touched. The gate then reports a defect in unrelated changes, which is
-    // the reading that costs the most time.
-    //
-    // The 'main' channel is what #2007 designed this harness around ("apply is
-    // pure git (curl lives only in check()), so the whole flow runs
-    // hermetically") and it is the only channel the mirror can actually serve.
-    // Production behaviour is untouched: this pins the harness, not
-    // resolveTargetRef().
+    // The updater also verifies main through GitHub's ref API. Feed it the
+    // mirror's actual target, so the real identity guard still runs offline.
+    NODE_OPTIONS: `--import=${pathToFileURL(join(dirname(cfg), 'ref-api-stub.mjs')).href}`,
+    CAREER_OPS_TEST_REF_SHA: targetSha,
     CAREER_OPS_UPDATE_CHANNEL: 'main',
   };
 }
@@ -217,7 +216,7 @@ export function runLeg({ oldTag, targetSha, label = oldTag, mutateMirror = null,
       // same confirmation a user would provide after reviewing the preview.
       output = execFileSync(process.execPath, ['update-system.mjs', 'apply', '--confirm'], {
         cwd: install, encoding: 'utf-8', timeout: 300000,
-        env: { ...hermeticEnv(cfg), CAREER_OPS_UPDATE_CONFIRM: '1' },
+        env: { ...hermeticEnv(cfg, targetSha), CAREER_OPS_UPDATE_CONFIRM: '1' },
       });
     } catch (e) { exitCode = e.status ?? 1; output = `${e.stdout ?? ''}${e.stderr ?? ''}`; }
 
@@ -457,7 +456,7 @@ function localPathsLeg() {
     try {
       output = execFileSync(process.execPath, ['update-system.mjs', 'apply', '--confirm'], {
         cwd: install, encoding: 'utf-8', timeout: 300000,
-        env: hermeticEnv(cfg),
+        env: hermeticEnv(cfg, targetSha),
       });
     } catch (e) { exitCode = e.status ?? 1; output = `${e.stdout ?? ''}${e.stderr ?? ''}`; }
 
@@ -506,7 +505,7 @@ function userLayerRefusalLeg() {
   const run = (cwd, cfg, ...args) => {
     try {
       return { exitCode: 0, output: execFileSync(process.execPath, ['update-system.mjs', ...args], {
-        cwd, encoding: 'utf-8', timeout: 300000, env: hermeticEnv(cfg), stdio: ['ignore', 'pipe', 'pipe'],
+        cwd, encoding: 'utf-8', timeout: 300000, env: hermeticEnv(cfg, targetSha), stdio: ['ignore', 'pipe', 'pipe'],
       }) };
     } catch (e) { return { exitCode: e.status ?? 1, output: `${e.stdout ?? ''}${e.stderr ?? ''}` }; }
   };

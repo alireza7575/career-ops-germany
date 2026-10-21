@@ -42,6 +42,9 @@ export const STATUS_ALIAS = {
   yanit_verildi: "RESPONDED",
   respondida: "RESPONDED", // web-only: not in states.yml
   contestada: "RESPONDED", // web-only: not in states.yml
+  // Assessment — states.yml `assessment`
+  screening: "ASSESSMENT",
+  "online screening": "ASSESSMENT",
   // Interview — states.yml `interview`
   entrevista: "INTERVIEW",
   "mülakat": "INTERVIEW",
