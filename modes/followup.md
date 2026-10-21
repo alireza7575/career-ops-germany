@@ -189,7 +189,7 @@ After the user reviews and says they've sent a follow-up, record it:
    - `contact` = who it was sent to
    - `notes` = brief note (e.g., "First follow-up, referenced Barbeiro.app")
 
-3. Optionally update the Notes column in `data/applications.md` with "Follow-up {N} sent {YYYY-MM-DD}"
+3. Optionally append "Follow-up {N} sent {YYYY-MM-DD}" using `node set-status.mjs --row <appNum> <current-state> --note "Follow-up {N} sent {YYYY-MM-DD}"`, preserving the application's current state.
 
 **IMPORTANT:** Only record follow-ups the user confirms they actually sent. Never record a draft as sent.
 

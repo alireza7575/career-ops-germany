@@ -14,9 +14,9 @@
 //
 // The bash block is extracted from batch-runner.sh and run against a stub
 // fetch-jd.mjs, so the test and the implementation cannot drift apart.
-import { pass, fail, rmSync, getBash } from './helpers.mjs';
+import { pass, fail, rmSync, getBash, toBashPath } from './helpers.mjs';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdtempSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -74,7 +74,7 @@ if (!bash || !apiBlock) {
 
     // Stub fetch-jd.mjs: records its argv, then answers according to STUB_MODE.
     const projectDir = join(work, 'project');
-    execFileSync(bash, ['-c', 'mkdir -p "$1"', 'mk', projectDir]);
+    mkdirSync(projectDir);
     writeFileSync(join(projectDir, 'fetch-jd.mjs'), [
       "import { appendFileSync } from 'node:fs';",
       "appendFileSync(process.env.STUB_TRACE, JSON.stringify(process.argv.slice(2)) + '\\n');",
@@ -94,7 +94,7 @@ if (!bash || !apiBlock) {
       const script = join(work, `case-${n}.sh`);
       writeFileSync(script, [
         '#!/usr/bin/env bash',
-        `jd_file=${JSON.stringify(jd)}`,
+        `jd_file=${JSON.stringify(toBashPath(jd))}`,
         `PROJECT_DIR=${JSON.stringify(withStub ? projectDir : join(work, 'no-such-project'))}`,
         'prefetch_min_words=80',
         'url="$OFFER_URL"',
@@ -103,9 +103,9 @@ if (!bash || !apiBlock) {
         '}',
         'runFallback',
       ].join('\n'));
-      const out = execFileSync(bash, [script], {
+      const out = execFileSync(bash, [toBashPath(script)], {
         encoding: 'utf-8', timeout: 30000, cwd: work,
-        env: { ...process.env, STUB_MODE: mode, STUB_TRACE: trace, OFFER_URL: url, TMPDIR: work },
+        env: { ...process.env, STUB_MODE: mode, STUB_TRACE: trace, OFFER_URL: url, TMPDIR: toBashPath(work) },
       });
       return { jd: readFileSync(jd, 'utf-8'), trace: readFileSync(trace, 'utf-8'), out };
     };

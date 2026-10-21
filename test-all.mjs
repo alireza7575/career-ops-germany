@@ -12,6 +12,18 @@
  *   node test-all.mjs --only <substring>      # Run ONLY discovered tests/**\/*.test.mjs
  *                                             # files whose path contains <substring>
  *                                             # (e.g. --only providers/themuse).
+ *   node test-all.mjs --jobs <N>              # Run at most N discovered suites at a time,
+ *                                             # one process each. Default: every available
+ *                                             # CPU, or CAREER_OPS_TEST_JOBS when set.
+ *                                             # 1 imports them into this process in turn.
+ *                                             # With more than 1, the inline sections
+ *                                             # below run at the same time as the
+ *                                             # discovered suites, in one of the N slots.
+ *
+ *   `--inline-child <result.json>` is how a run with more than one job starts
+ *   those inline sections in a process of their own. It is not a way to run
+ *   part of the suite: it prints no summary and its exit code says nothing
+ *   about what failed.
  *
  *   LOUD WARNING: `--only` runs ONLY discovered tests/ files — every inline
  *   core section above (syntax, scripts, dashboard, data contract, personal
@@ -36,8 +48,8 @@
  */
 
 
-import { execSync, execFile, execFileSync, spawn, spawnSync } from 'child_process';
-import { readFileSync, existsSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync as _rmSync, statSync, unlinkSync, realpathSync, symlinkSync, copyFileSync } from 'fs';
+import { execSync, execFileSync, spawn, spawnSync } from 'child_process';
+import { readFileSync, existsSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync as _rmSync, statSync, unlinkSync, realpathSync, symlinkSync, copyFileSync, openSync, closeSync } from 'fs';
 
 // Windows keeps a handle open on a just-exited child process's working files
 // for a short window (antivirus and Search Indexer widen it), so removing a
@@ -52,16 +64,26 @@ import { readFileSync, existsSync, readdirSync, mkdtempSync, mkdirSync, writeFil
 // EPERM) with linear backoff when given maxRetries, so default it everywhere
 // rather than at ~95 individual call sites. An explicit option still wins.
 const rmSync = (target, opts = {}) => _rmSync(target, { maxRetries: 10, retryDelay: 100, ...opts });
-import { join, dirname, basename, delimiter, relative } from 'path';
-import { tmpdir } from 'os';
-import { promisify } from 'util';
+import { join, dirname, basename, relative, delimiter } from 'path';
+import { tmpdir, availableParallelism } from 'os';
 import { fileURLToPath, pathToFileURL } from 'url';
 import * as yaml from 'js-yaml';
-import { pass, fail, warn, run, runAcrossUtcDay, runAcrossLocalDay, lastRunFailure, formatRunFailure, fileExists, finish, results, linkNodeModules, ROOT, QUICK, NODE, DEFAULT_SCRIPT_TIMEOUT_MS, getBash, toBashPath, hermeticGitEnv } from './tests/helpers.mjs';
+import { pass, fail, warn, run, runAcrossUtcDay, runAcrossLocalDay, lastRunFailure, formatRunFailure, fileExists, finish, results, absorbResults, importSuiteContained, linkNodeModules, ROOT, QUICK, NODE, DEFAULT_SCRIPT_TIMEOUT_MS, getBash, toBashPath, hermeticGitEnv, pinSandboxDataRoot, exitOnInterrupt, ownRootEnv } from './tests/helpers.mjs';
 import { flagValue, hasFlag } from './lib/cli-flags.mjs';
 import { collectMjsFiles } from './lib/mjs-files.mjs';
+import { checkSyntax, NODE_CHECK_TIMEOUT_MS } from './lib/syntax-check.mjs';
 import { walkTree, listTree } from './lib/walk-tree.mjs';
+import { FROZEN_EVALUATION_MODES, KNOWN_EVALUATION_MODES, discoverEvaluationModes, readModeText, structuralGaps } from './tests/evaluation-mode-parity-helpers.mjs';
+import { childFailureExcerpt } from './lib/failure-excerpt.mjs';
 import { SCRATCH_PREFIX, markScratchOwner, sweepScratchDirs } from './lib/scratch-dirs.mjs';
+import { MARKER_FILE } from './tests/data-root-guard.mjs';
+import { getCareerOpsRoot } from './path-resolver.mjs';
+
+// A runner started from a node:test suite inherits this private marker. If it
+// reaches our own node --test children, Node treats them as nested workers and
+// suppresses their TAP verdicts (including failures). Each child here must be
+// an independent test run.
+delete process.env.NODE_TEST_CONTEXT;
 
 /**
  * Read a repo-relative text file as UTF-8.
@@ -70,6 +92,9 @@ import { SCRATCH_PREFIX, markScratchOwner, sweepScratchDirs } from './lib/scratc
  * @returns {string} File contents.
  */
 function readFile(path) {
+  // Several earlier checks walk modes before the parity gate. They must use
+  // the same contained reader or a pointer could escape before parity runs.
+  if (/^modes[\\/]/.test(path)) return readModeText(ROOT, path);
   const fullPath = join(ROOT, path);
   let content = readFileSync(fullPath, 'utf-8');
   if (content.trim().startsWith('..') && content.trim().split('\n').length === 1) {
@@ -79,6 +104,11 @@ function readFile(path) {
     }
   }
   return content;
+}
+
+function readOfertaMode() {
+  return readFile('modes/oferta.md')
+    .replace(/^\*\*\d+\. .+?\*\*\. Read `(modes\/oferta-signals\/[^`]+)` when .*$/gm, (_, file) => readFile(file));
 }
 
 /**
@@ -104,15 +134,35 @@ const normalizeEol = (text) => text.replace(/\r\n/g, '\n');
  */
 const readTextLF = (path) => normalizeEol(readFile(path));
 
+// An interrupted run still answers for the developer's data (#5113). A signal
+// handler only runs between two turns of the event loop, and most of this file
+// is synchronous: every discovered suite is awaited, so the loop turns there,
+// and the script smoke tests yield between scripts for the same reason.
+//
+// Not in the inline sections' child (`--inline-child`, #5146): the run that
+// started it answers for the data and stops the child on its way out, so a
+// handler there would only print the notice a second time.
+if (!hasFlag(process.argv, '--inline-child')) exitOnInterrupt();
+
 // ── Auto-discovered test files (issue #1440) ─────────────────────────────
-// Deterministic: listTree sorts entries by name on every run and OS.
-// Discovery is limited to tests/ so root-level
+// Deterministic: recursive readdirSync with default lexicographic sort of
+// entry names — same order on every run and OS. No glob library, no
+// registration list. Discovery is limited to tests/ so root-level
 // standalone *.test.mjs files are never picked up.
 const TESTS_DIR = join(ROOT, 'tests');
 
 function discoverTests(dir) {
-  // The CV visual suite uses Playwright's registration API, not node --test.
+  // walkTree sorts every level by name, so the run order is identical on every
+  // run and OS — the property #1440 asked for. It also refuses to descend into
+  // a nested checkout, which matters more here than anywhere else in this file:
+  // this walk does not READ what it finds, it hands it to the runner. A
+  // worktree parked under tests/ executed a stale checkout's suites against the
+  // current tree, and test-all.mjs printed "🟢 All tests passed — safe to
+  // push/merge" for them (#3762).
   return listTree(dir, { match: /\.test\.mjs$/ })
+    // This is a Playwright suite, run by the dedicated CV visual job. It is
+    // named .test.mjs for the repository convention, but node --test cannot
+    // execute Playwright's test registration API.
     .filter((f) => f !== join(TESTS_DIR, 'cv-visual', 'cv-visual.test.mjs'));
 }
 
@@ -166,6 +216,81 @@ function stripCommentLines(src) {
   return kept.join('\n');
 }
 
+// What the runner may do with a discovered suite, read off its source. Shared
+// by the in-process loop and the --jobs runner, so both refuse and route the
+// same files for the same reasons.
+//
+//   'calls-exit'    Discovered suites share the runner's counters (in-process)
+//                   or report to it (in a child). A process.exit() inside one
+//                   would terminate test-all mid-run with a forged exit code —
+//                   every later section (and finish()) would silently never
+//                   run. Refuse to import such a suite and fail loudly instead
+//                   (#1916 regression).
+//   'node-test'     A node:test suite reports through node's OWN runner, which
+//                   touches none of the counters, and it runs its tests
+//                   asynchronously AFTER the import resolves — so finish()'s
+//                   process.exit() killed them mid-flight and discarded the
+//                   result. A deliberately failing suite dropped into tests/
+//                   printed "2049 passed, 0 failed / All tests passed" and
+//                   exited 0 (verified 2026-08-03). That silently covered all
+//                   16 node:test suites here, including every provider test:
+//                   they only ever reported under a direct `node --test`. They
+//                   run in a child process and the real exit code is folded
+//                   into the counters. Importing them is what loses the
+//                   result, so this cannot be fixed in finish(); it has to
+//                   happen where the suite is invoked.
+//   'calls-finish'  finish() prints the global summary and exits — inside a
+//                   discovered suite it forges the verdict line and
+//                   decapitates every suite sorting after it, sailing past the
+//                   process.exit() check (the exit lives in helpers).
+//   'pass-fail'     Everything else: imported, with a throw contained
+//                   (importSuiteContained in tests/helpers.mjs).
+//
+// stripCommentLines() first for both forbidden calls: a suite that only
+// MENTIONS one in a comment (e.g. documenting why it doesn't make it) must not
+// be flagged. The order is the order the checks have always run in.
+function discoveredSuiteKind(src) {
+  if (/\bprocess\.exit\s*\(/.test(stripCommentLines(src))) return 'calls-exit';
+  if (/from ['"]node:test['"]/.test(src)) return 'node-test';
+  if (/\bfinish\s*\(\s*\)/.test(stripCommentLines(src))) return 'calls-finish';
+  return 'pass-fail';
+}
+
+const SUITE_REFUSALS = {
+  'calls-exit': (rel) => `${rel} calls process.exit() — discovered suites must use pass/fail from tests/helpers.mjs and never exit`,
+  'calls-finish': (rel) => `${rel} calls finish() — only test-all.mjs may print the global summary; discovered suites use pass/fail and return`,
+};
+
+/**
+ * Report one finished node:test suite: a single pass line, or a fail line with
+ * an excerpt of what the child printed.
+ *
+ * @param {string} rel - Repo-relative path of the suite.
+ * @param {boolean} ok - Whether the child exited 0.
+ * @param {string} stdout - The child's stdout (read for the pass count).
+ * @param {{stdout?: string, stderr?: string}|null} detail - Streams of a failed run.
+ * @param {string} how - How it ended, for the fail line (`exit 1`, `killed after 120s`).
+ * @returns {void}
+ */
+function reportNodeTestSuite(rel, ok, stdout, detail, how) {
+  if (ok) {
+    // Both reporters: TAP prints "# pass N", the default spec reporter
+    // prints "ℹ pass N". Cosmetic — the pass/fail verdict is the exit code.
+    const count = (stdout.match(/^(?:#|ℹ) pass (\d+)/m) ?? [])[1];
+    pass(`${rel} — node:test suite passed${count ? ` (${count} tests)` : ''}`);
+    return;
+  }
+  fail(`${rel} — node:test suite failed (${how})`);
+  // Surface the runner's own summary; a bare "failed" is not actionable.
+  // The trailing window alone is not actionable either: node prints the
+  // error message above the frames, so a twelve-line tail kept
+  // `actual: false, expected: true` and dropped the interpolated value
+  // that says WHICH assertion and by how much (#4017).
+  for (const line of childFailureExcerpt(detail)) {
+    console.log(`      ${line}`);
+  }
+}
+
 async function runDiscovered(filter = null) {
   let files = discoverTests(TESTS_DIR);
   if (filter) {
@@ -177,106 +302,329 @@ async function runDiscovered(filter = null) {
     console.log(`  ❌ no test files matched${filter ? ` --only "${filter}"` : ''} under tests/`);
     process.exit(1);
   }
+  // One file gains nothing from a child process, and --jobs 1 is the original
+  // in-process loop below: the fallback when a parallel run looks wrong, and
+  // the reference a parallel run is compared against.
+  if (JOBS > 1 && files.length > 1) {
+    await runDiscoveredParallel(files, Math.min(JOBS, files.length));
+    return;
+  }
   for (const f of files) {
     const rel = f.slice(ROOT.length + 1);
-    const src = readFileSync(f, 'utf-8');
-    // Discovered suites run IN-PROCESS and share this suite's counters. A
-    // process.exit() inside one would terminate test-all mid-run with a forged
-    // exit code — every later section (and finish()) would silently never run.
-    // Refuse to import such a suite and fail loudly instead (#1916 regression).
-    // stripCommentLines() first: a suite that only MENTIONS process.exit() in
-    // a comment (e.g. documenting why it doesn't call it) must not be flagged.
-    if (/\bprocess\.exit\s*\(/.test(stripCommentLines(src))) {
-      fail(`${rel} calls process.exit() — discovered suites must use pass/fail from tests/helpers.mjs and never exit`);
+    // In-process suites share this process's environment. One that moves the
+    // data root for its own fixture and leaves it there, or deletes the
+    // variable to "restore" it, would hand every suite after it a different
+    // root — the developer's own, in the second case (#5113).
+    pinSandboxDataRoot();
+    const kind = discoveredSuiteKind(readFileSync(f, 'utf-8'));
+    if (SUITE_REFUSALS[kind]) {
+      fail(SUITE_REFUSALS[kind](rel));
       continue;
     }
-    // A node:test suite reports through node's OWN runner, which touches none
-    // of the counters above, and it runs its tests asynchronously AFTER the
-    // import resolves — so finish()'s process.exit() killed them mid-flight and
-    // discarded the result. A deliberately failing suite dropped into tests/
-    // printed "2049 passed, 0 failed / All tests passed" and exited 0
-    // (verified 2026-08-03). That silently covered all 16 node:test suites
-    // here, including every provider test: they only ever reported under a
-    // direct `node --test`.
-    //
-    // Run those in a child process and fold the real exit code into the
-    // counters. Importing them is what loses the result, so this cannot be
-    // fixed in finish(); it has to happen where the suite is invoked.
-    if (/from ['"]node:test['"]/.test(src)) {
+    if (kind === 'node-test') {
       const out = run(NODE, ['--test', f]);
-      if (out === null) {
-        const detail = lastRunFailure();
-        fail(`${rel} — node:test suite failed (exit ${detail?.status ?? '?'})`);
-        // Surface the runner's own summary; a bare "failed" is not actionable.
-        const tail = (detail?.stderr || detail?.stdout || '').split('\n').filter(Boolean).slice(-12);
-        for (const line of tail) console.log(`      ${line}`);
-      } else {
-        // Both reporters: TAP prints "# pass N", the default spec reporter
-        // prints "ℹ pass N". Cosmetic — the pass/fail verdict is the exit code.
-        const count = (out.match(/^(?:#|ℹ) pass (\d+)/m) ?? [])[1];
-        pass(`${rel} — node:test suite passed${count ? ` (${count} tests)` : ''}`);
-      }
+      reportNodeTestSuite(rel, out !== null, out ?? '', lastRunFailure(), `exit ${lastRunFailure()?.status ?? '?'}`);
       continue;
     }
-    // finish() prints the global summary and exits — inside a discovered suite
-    // it forges the verdict line and decapitates every suite sorting after it,
-    // sailing past the process.exit() check above (the exit lives in helpers).
-    // Same stripCommentLines() treatment as the process.exit() guard above: a
-    // suite that only MENTIONS finish() in a comment (e.g. documenting why it
-    // doesn't call it) must not be flagged.
-    if (/\bfinish\s*\(\s*\)/.test(stripCommentLines(src))) {
-      fail(`${f.slice(ROOT.length + 1)} calls finish() — only test-all.mjs may print the global summary; discovered suites use pass/fail and return`);
-      continue;
-    }
-    // Neither guard above survives contact with an uncaught THROW, which ends
-    // the run just as completely and rather more quietly: node unwinds straight
-    // out of test-all, finish() never prints its summary, and every suite
-    // sorting after this one silently never runs. That does not read as a
-    // broken suite — it reads as a finished one, so the screen of green above
-    // the cut looks like a pass. (Measured on a Windows box with no symlink
-    // privilege: tests/intake.test.mjs threw at import and took 2067 of 3693
-    // checks with it, with no verdict line at all — #2828.) A discovered suite
-    // is a guest, not a co-host: its crash is one failure, not the end of the
-    // run.
-    const before = results();
-    try {
-      await import(pathToFileURL(f).href);
-    } catch (err) {
-      const ran = (results().passed - before.passed) + (results().failed - before.failed);
-      fail(`${rel} — suite threw and was contained (${err?.code ?? err?.name ?? 'Error'}): ${err?.message ?? err}`);
-      // How much this counts as "one failure" actually cost: the reported
-      // totals only ever include the `ran` assertions above, and nothing else
-      // says the rest never happened — on one platform a suite's crash reads
-      // as one broken assertion, on another the same file's assertions run
-      // and pass, and the two summaries look the same shape (#3976).
-      //
-      // An earlier version of this line also estimated how many assertions
-      // never ran, from a static count of pass()/fail() call sites in the
-      // file. artemtrofymenko (the issue's author) measured that estimate
-      // against real suites and found it wrong in both directions badly
-      // enough to make the diagnostic worse than none: a suite asserting
-      // through a local wrapper (`function ok(cond) { if (cond) pass(...)
-      // else fail(...) }`) has far more real assertions than call sites
-      // (tests/discover-ats.test.mjs: 155 executed, 4 call sites — the
-      // estimate goes negative, `lost > 0` is false, and the line silently
-      // does not print, reverting to exactly the pre-fix silence for the
-      // suites this was built for — 38 of 278 in-process suites use this
-      // shape); a suite writing `if (cond) pass(...); else fail(...)` pairs
-      // has roughly twice as many call sites as real assertions
-      // (tests/providers/_http.test.mjs: ~2x), so the estimate invents lost
-      // assertions that never existed. A signal present for some suites and
-      // silently absent for others turns its own absence into a false
-      // reassurance — worse than never estimating at all. `ran` alone does
-      // not have that failure mode: it is an exact count in every case, so
-      // it is printed unconditionally instead.
-      console.log(`      ${ran} assertion${ran === 1 ? '' : 's'} ran before the throw; everything after it in this file did not run`);
-      // The throw site, not just the message: a suite that dies mid-import
-      // leaves no other clue how far it got.
-      for (const line of String(err?.stack ?? '').split('\n').slice(1, 4)) {
-        if (line.trim()) console.log(`      ${line.trim()}`);
-      }
-    }
+    await importSuiteContained(f, rel);
   }
+}
+
+// ── Discovered suites, several at a time (--jobs N) ──────────────────────
+//
+// The loop above runs ~600 files one after another in this process, which is
+// most of a full run's wall time on a machine with idle cores. Here each suite
+// gets a process of its own and N run at once.
+//
+// What stays the same as the serial loop, on purpose:
+//   - the order of the output. Each suite's output is buffered and printed when
+//     its turn in discovery order comes, so two runs of the same tree print the
+//     same log whatever finished first;
+//   - the source guards (process.exit, finish()) and their messages;
+//   - node:test suites run under `node --test` and report one line each;
+//   - the totals. A pass/fail-style suite counts in its own process and hands
+//     results() back (tests/run-discovered-child.mjs); absorbResults() adds
+//     them here, so finish() prints the same numbers and exit code.
+//
+// What differs: suites no longer share a process. One that relied on state an
+// earlier suite left behind (an env var, a module-level cache) finds it gone,
+// and one that keeps the event loop open is cut off after a grace period
+// instead of riding along until finish(). Both are reported, not hidden.
+
+// A node:test suite gets the same 30s budget run() gives it, times this, when
+// it shares the machine with N-1 others. Measured on 8 cores: a file takes
+// about 1.7x as long at 8 jobs as it does alone, and the slowest is 16s alone.
+const PARALLEL_NODE_TEST_BUDGET_FACTOR = 4;
+// The serial loop has no limit for an imported suite at all; a child that never
+// exits must not hang the whole run, so this one is only a backstop.
+const PARALLEL_SUITE_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * Spawn node on one suite and collect what it printed.
+ *
+ * @param {string[]} args - Arguments after the node binary.
+ * @param {number} timeoutMs - Kill the child after this long.
+ * @returns {Promise<{status: number|null, signal: string|null, timedOut: boolean, stdout: string, stderr: string, merged: string, ms: number}>}
+ *   `merged` is both streams in arrival order, which is what a terminal shows.
+ */
+function spawnSuite(args, timeoutMs, captureFile = null) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const out = [];
+    const err = [];
+    let timedOut = false;
+    // With a capture file, both of the child's streams are the SAME descriptor,
+    // exactly as `> file 2>&1` makes them. Two pipes cannot do this: each is
+    // read when its data happens to arrive, so a line a suite wrote to stderr
+    // could land before or after the stdout lines around it, and the log would
+    // differ from a serial run's (and from the previous parallel run's).
+    const fd = captureFile ? openSync(captureFile, 'w') : null;
+    // Nested test-all runs (some suites start one) must not fan out again
+    // inside a worker slot: JOBS is pinned to 1 in the environment below.
+    const child = spawn(NODE, args, { cwd: ROOT, env: process.env, stdio: ['ignore', fd ?? 'pipe', fd ?? 'pipe'] });
+    const killer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
+    child.stdout?.on('data', (d) => out.push(d));
+    child.stderr?.on('data', (d) => err.push(d));
+    // Once only. A child that fails to spawn emits 'error' and may emit 'close'
+    // after it; a second closeSync() on the same descriptor throws EBADF from
+    // inside an event handler, which would take the runner down before
+    // finish() prints anything.
+    let settled = false;
+    const done = (status, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killer);
+      if (fd !== null) closeSync(fd);
+      let merged = '';
+      if (captureFile) {
+        try { merged = readFileSync(captureFile, 'utf-8'); } catch { /* reported by the caller as a dead suite */ }
+      }
+      resolve({
+        status, signal, timedOut, merged,
+        stdout: Buffer.concat(out).toString('utf-8'),
+        stderr: Buffer.concat(err).toString('utf-8'),
+        ms: Date.now() - startedAt,
+      });
+    };
+    child.on('error', (e) => { err.push(Buffer.from(String(e?.message ?? e))); done(null, null); });
+    child.on('close', done);
+  });
+}
+
+/**
+ * Run one discovered suite in a child and return a function that reports it.
+ *
+ * Reporting is deferred so the caller can apply results in discovery order:
+ * nothing here touches the counters or stdout.
+ *
+ * @param {string} f - Absolute path of the suite.
+ * @param {string} scratch - Directory for this run's result files.
+ * @param {number} index - Position in discovery order (names the result file).
+ * @returns {Promise<{report: () => void, ms: number, lingered: boolean}>}
+ */
+async function runSuiteInChild(f, scratch, index) {
+  const rel = f.slice(ROOT.length + 1);
+  const kind = discoveredSuiteKind(readFileSync(f, 'utf-8'));
+  if (SUITE_REFUSALS[kind]) {
+    return { ms: 0, lingered: false, report: () => fail(SUITE_REFUSALS[kind](rel)) };
+  }
+  if (kind === 'node-test') {
+    const r = await spawnSuite(['--test', f], DEFAULT_SCRIPT_TIMEOUT_MS * PARALLEL_NODE_TEST_BUDGET_FACTOR);
+    const how = r.timedOut ? `killed after ${Math.round(r.ms / 1000)}s` : `exit ${r.status ?? '?'}`;
+    return { ms: r.ms, lingered: false, report: () => reportNodeTestSuite(rel, r.status === 0, r.stdout, r, how) };
+  }
+  const resultFile = join(scratch, `${index}.json`);
+  const args = [join(TESTS_DIR, 'run-discovered-child.mjs'), f, resultFile];
+  if (QUICK) args.push('--quick');
+  const r = await spawnSuite(args, PARALLEL_SUITE_TIMEOUT_MS, join(scratch, `${index}.out`));
+  let counts = null;
+  try { counts = JSON.parse(readFileSync(resultFile, 'utf-8')); } catch { /* reported below */ }
+  return {
+    ms: r.ms,
+    lingered: counts?.lingered === true,
+    report: () => {
+      if (r.merged) process.stdout.write(r.merged.endsWith('\n') ? r.merged : `${r.merged}\n`);
+      if (counts) absorbResults(counts);
+      if (r.timedOut) {
+        fail(`${rel} — suite was killed after ${Math.round(r.ms / 1000)}s without finishing`);
+      } else if (!counts) {
+        // No result file: the process died before its exit handler ran, so
+        // however many assertions printed above, none of them were counted.
+        fail(`${rel} — suite process died without reporting (exit ${r.status ?? '?'}${r.signal ? `, ${r.signal}` : ''}); its assertions above are not in the totals`);
+      } else if (r.status !== 0) {
+        // The suite reported, then the process ended badly anyway: an error
+        // thrown from async work after the import resolved. In the serial loop
+        // that same error takes the whole run down with it.
+        fail(`${rel} — suite process exited ${r.status ?? r.signal ?? '?'} after reporting (an error outside its awaited work)`);
+        // Nothing to excerpt: the error is already in the suite's output above.
+      }
+    },
+  };
+}
+
+// ── The inline sections, at the same time as the suites (#5146) ──────────
+//
+// Everything between the two INLINE SECTIONS markers further down predates
+// tests/: sections that run one after another in one process. They were a
+// little under 30% of a full run, and no discovered suite started until the
+// last of them had finished.
+//
+// With more than one job, this process starts a second copy of itself that
+// runs only those sections (`--inline-child`), and runs the discovered suites
+// in the pool meanwhile. The child takes one of the N slots while it runs.
+//
+// What stays the same as running them first:
+//   - the log. The child writes to this process's own stdout and stderr, so
+//     the sections stream as they always did. Every suite's output is held
+//     until the child has exited, which is the buffering the pool already does
+//     to keep discovery order;
+//   - the totals and the exit code. The child hands results() back through a
+//     file, the way a suite's child does;
+//   - `--jobs 1`, where everything still runs in this process, in order.
+//
+// What differs: the sections and the suites are in the working tree at the
+// same time. Neither may leave something in the repository where the other
+// can find it: see "Parallel runs" in tests/README.md.
+
+/**
+ * Start this file's inline sections in a process of their own.
+ *
+ * @param {string} resultFile - Where the child writes its counters.
+ * @returns {Promise<{status: number|null, signal: string|null, error: string|null, ms: number}>}
+ *   Resolves when the child has ended, however it ended.
+ */
+function startInlineSections(resultFile) {
+  const startedAt = Date.now();
+  // The command line this process was given, plus the one flag: the sections
+  // read --quick from it, and a flag added later reaches them without a list
+  // here to keep up to date. No `cwd`: the sections have always run wherever
+  // the runner was started from.
+  const child = spawn(NODE, [fileURLToPath(import.meta.url), ...process.argv.slice(2), '--inline-child', resultFile], {
+    env: process.env,
+    stdio: 'inherit',
+  });
+  let exited = false;
+  // Still running when this process exits only if the run was cut short, by
+  // an error thrown in the pool for one. Left alone the child would go on
+  // printing sections into a terminal whose run is over. A signal that kills
+  // this process outright does not come through here; Ctrl-C reaches the
+  // child by itself, as part of the same foreground process group.
+  process.on('exit', () => { if (!exited) child.kill('SIGKILL'); });
+  return new Promise((resolve) => {
+    // Once only, for the reason spawnSuite() gives: a child that fails to
+    // spawn emits 'error' and may emit 'close' after it.
+    const settle = (status, signal, error = null) => {
+      if (exited) return;
+      exited = true;
+      resolve({ status, signal, error, ms: Date.now() - startedAt });
+    };
+    child.on('error', (e) => settle(null, null, String(e?.message ?? e)));
+    child.on('close', (status, signal) => settle(status, signal));
+  });
+}
+
+/**
+ * Fold the inline sections' child into this run: its counters, and one failure
+ * if it stopped before the last section.
+ *
+ * @param {{status: number|null, signal: string|null, error: string|null}} r - How the child ended.
+ * @param {string} resultFile - Where it wrote its counters.
+ * @returns {void}
+ */
+function reportInlineSections(r, resultFile) {
+  let counts = null;
+  try { counts = JSON.parse(readFileSync(resultFile, 'utf-8')); } catch { /* reported below */ }
+  if (counts) absorbResults(counts);
+  if (counts?.completed) {
+    // finish() reads process.exitCode for a failure the counters never saw.
+    // In one process a section that set it reached finish() directly.
+    if (counts.runnerFailed) process.exitCode = 1;
+    return;
+  }
+  // An uncaught throw or an exit call in a section. In one process that ended
+  // the run on the spot, with no summary and nothing after it run. Here the
+  // suites have run regardless, so the run goes on to report them, and this is
+  // the line that says the sections above are not all of them.
+  const how = r.error ? `could not start: ${r.error}` : `exit ${r.status ?? '?'}${r.signal ? `, ${r.signal}` : ''}`;
+  fail(`the inline sections stopped before the last one (${how}) — every section after the output above did not run`
+    + (counts ? '' : ', and none of the assertions above are in the totals'));
+}
+
+/**
+ * Run the discovered suites `jobs` at a time and report them in discovery order.
+ *
+ * @param {string[]} files - Suites, already in discovery order.
+ * @param {number} jobs - How many children to keep running.
+ * @param {object} [options]
+ * @param {boolean} [options.withInlineSections] - Also run this file's inline
+ *   sections, in one of the `jobs` slots, and print them before any suite.
+ * @returns {Promise<void>}
+ */
+async function runDiscoveredParallel(files, jobs, { withInlineSections = false } = {}) {
+  const scratch = mkdtempSync(join(tmpdir(), 'career-ops-test-jobs-'));
+  const startedAt = Date.now();
+  const finished = new Array(files.length).fill(null);
+  let next = 0;
+  let reported = 0;
+  // While the sections are still printing, nothing else may: a suite that has
+  // finished waits in `finished` exactly as one waiting for its turn does.
+  let held = withInlineSections;
+  const flush = () => {
+    if (held) return;
+    while (reported < files.length && finished[reported]) {
+      finished[reported].report();
+      reported++;
+    }
+  };
+  const worker = async () => {
+    while (next < files.length) {
+      const index = next++;
+      finished[index] = await runSuiteInChild(files[index], scratch, index);
+      flush();
+    }
+  };
+  const pool = Math.min(jobs, files.length);
+  let inlineMs = 0;
+  try {
+    if (withInlineSections) {
+      const resultFile = join(scratch, 'inline.json');
+      // One slot is the sections' until they finish; then the pool gets it.
+      const meanwhile = Math.min(jobs - 1, files.length);
+      const sections = startInlineSections(resultFile).then((r) => {
+        inlineMs = r.ms;
+        reportInlineSections(r, resultFile);
+        held = false;
+        flush();
+        return meanwhile < pool ? worker() : undefined;
+      });
+      await Promise.all([sections, ...Array.from({ length: meanwhile }, worker)]);
+    } else {
+      await Promise.all(Array.from({ length: pool }, worker));
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  const wall = (Date.now() - startedAt) / 1000;
+  const summed = finished.reduce((n, r) => n + (r?.ms ?? 0), 0) / 1000;
+  console.log(`\n  ⏱  ${files.length} discovered suites in ${wall.toFixed(0)}s, ${pool} at a time (${summed.toFixed(0)}s of suite time; --jobs N or CAREER_OPS_TEST_JOBS to change, 1 runs them in-process)`);
+  if (withInlineSections) {
+    console.log(`  ⏱  the inline sections ran at the same time, for the first ${(inlineMs / 1000).toFixed(0)}s, in one of the ${jobs} slots`);
+  }
+  const lingering = files.filter((_, i) => finished[i]?.lingered).map((f) => f.slice(ROOT.length + 1));
+  if (lingering.length) {
+    // Not a failure: the serial loop never notices these. Named because each
+    // one holds a worker for the whole grace period, and because a handle left
+    // open is usually a server or timer the suite meant to close.
+    console.log(`  ⏱  ${lingering.length} suite(s) kept their process alive after finishing and were cut off: ${lingering.join(', ')}`);
+  }
+}
+
+// Set in the process a run with more than one job starts for the inline
+// sections: the file its counters go to. See startInlineSections().
+const INLINE_CHILD = hasFlag(process.argv, '--inline-child') ? (flagValue(process.argv, '--inline-child') ?? '') : null;
+if (INLINE_CHILD === '' || INLINE_CHILD?.startsWith('--')) {
+  console.log('  ❌ --inline-child requires a result file; it is how test-all.mjs starts its own inline sections, not a flag to pass by hand');
+  process.exit(1);
 }
 
 // A scratch copy left by a killed run used to poison every walker that follows:
@@ -292,8 +640,11 @@ async function runDiscovered(filter = null) {
 // Placed before the `--only` exit below: the 264-failure run is exactly the one
 // a developer then re-runs with `--only core-test-layout` to look closer, and a
 // sweep they skip past would leave that second run behaving differently again.
+//
+// Not in the inline sections' child: the run that started it has just swept,
+// and a directory it could not remove would be warned about, and counted, twice.
 {
-  const { removed, failed } = sweepScratchDirs(ROOT);
+  const { removed, failed } = INLINE_CHILD === null ? sweepScratchDirs(ROOT) : { removed: [], failed: [] };
   // Only speak when there was something to say. A sweep is silent on the
   // overwhelming majority of runs, and a line reporting that nothing happened
   // would be noise at the top of every one of them. `kept` is deliberately not
@@ -319,6 +670,30 @@ async function runDiscovered(filter = null) {
 // to "no filter": that would run everything and read as a pass of the subset
 // that was asked for — the same silent substitution this file's flag reading
 // was fixed for.
+// How many discovered suites run at once. In order of precedence:
+//   --jobs N                 this run
+//   CAREER_OPS_TEST_JOBS=N   this machine (a shell profile, a CI job)
+//   every available CPU      the default
+// 1 keeps the original loop: every suite imported into this process, in order.
+// A value that is not a positive integer is a usage error either way, for the
+// reason --only's is below: a typo that silently falls back to the default
+// reads as the run that was asked for.
+const JOBS = (() => {
+  const fromFlag = hasFlag(process.argv, '--jobs');
+  const raw = fromFlag ? (flagValue(process.argv, '--jobs') ?? '') : (process.env.CAREER_OPS_TEST_JOBS ?? '').trim();
+  if (!fromFlag && raw === '') return availableParallelism();
+  if (!/^[1-9]\d*$/.test(raw)) {
+    console.log(`  ❌ ${fromFlag ? '--jobs' : 'CAREER_OPS_TEST_JOBS'} must be a positive integer, e.g. ${fromFlag ? '--jobs 4' : 'CAREER_OPS_TEST_JOBS=4'} (got "${raw}")`);
+    process.exit(1);
+  }
+  return Number(raw);
+})();
+// Everything this run starts inherits a serial default. Some suites launch a
+// test-all of their own; one that fanned out again inside a worker slot would
+// put N x N processes on N cores, and its output would stop being comparable
+// with the serial runs those suites were written against.
+process.env.CAREER_OPS_TEST_JOBS = '1';
+
 const ONLY = hasFlag(process.argv, '--only') ? (flagValue(process.argv, '--only') ?? '') : null;
 if (ONLY !== null) {
   if (ONLY === '' || ONLY.startsWith('--')) {
@@ -329,6 +704,38 @@ if (ONLY !== null) {
   await runDiscovered(ONLY);
   finish();
 }
+
+// More than one job: the inline sections go to a child and the discovered
+// suites start now, not after them. One suite gains nothing from a process of
+// its own, as in runDiscovered(), and none at all is the hard failure
+// runDiscovered() reports once the sections have run.
+if (INLINE_CHILD === null && JOBS > 1) {
+  const files = discoverTests(TESTS_DIR);
+  if (files.length > 1) {
+    await runDiscoveredParallel(files, JOBS, { withInlineSections: true });
+    finish();
+  }
+}
+
+// What the inline sections' child reports back, written as the process ends
+// so that a section that threw or exited still hands over what it counted;
+// `completed` is how the parent tells that from a run that reached the end.
+let inlineSectionsCompleted = false;
+let inlineRunnerFailed = false;
+if (INLINE_CHILD !== null) {
+  process.on('exit', () => {
+    try {
+      writeFileSync(INLINE_CHILD, JSON.stringify({ ...results(), completed: inlineSectionsCompleted, runnerFailed: inlineRunnerFailed }));
+    } catch {
+      // Nothing to report to: the parent reads a missing file as sections that died.
+    }
+  });
+}
+
+// ── INLINE SECTIONS: BEGIN ──────────────────────────────────────
+// From here to the END marker is what `--inline-child` runs.
+// tests/test-all-inline-jobs.test.mjs replaces this stretch with fixture
+// sections, so both markers have to stay where the stretch starts and ends.
 
 console.log('\n🧪 career-ops test suite\n');
 
@@ -352,25 +759,26 @@ const mjsFiles = collectMjsFiles(ROOT).map(f => f.slice(ROOT.length + 1).replace
 // diff two runs' pass labels.
 console.log(`  (${mjsFiles.length} .mjs files, recursive from the repository root)`);
 
-// `node --check` parses a file and exits; it runs no user code, touches no
-// shared state, and its result depends on nothing but that one file. Spawning
-// the files one at a time was pure process-startup latency, so they go through
-// a bounded pool instead (#2387) — which is also what keeps the recursive scope
-// above a wall-clock non-event. Results are collected by index and reported
-// afterwards in collector order, so the log stays byte-identical to the
-// sequential version regardless of completion order.
-const SYNTAX_POOL_SIZE = 8;
-const execFileAsync = promisify(execFile);
-const syntaxOk = new Array(mjsFiles.length);
-const syntaxDetail = new Array(mjsFiles.length);
-let nextSyntaxIdx = 0;
+// One process parses all of them, and `node --check` then runs only on a file
+// that pass did not vouch for, so a failure below carries the diagnostic it
+// always carried (lib/syntax-check.mjs, #5078). One `node --check` per file,
+// even eight at a time (#2387), was 22 s of starting node for 0.3 s of parsing.
+// Results come back by index and are reported in collector order, so the log
+// does not depend on what finished first.
+const { errors: syntaxErrors, fastPassUnavailable } = await checkSyntax(mjsFiles, { cwd: ROOT, node: NODE });
+if (fastPassUnavailable) {
+  // Not a failure and not a narrower check: every file went through
+  // `node --check` instead. Said out loud because it costs about 20 s a run,
+  // and nothing else here would show where they went.
+  console.log(`  (the single-process parse did not run: ${fastPassUnavailable}; each file was checked with node --check instead)`);
+}
 
 // A bare catch reports a child killed on timeout, or one that never spawned, as
 // "has syntax errors" — sending the reader hunting for a parse error that does
 // not exist. Keep enough of the child's own diagnosis to tell those apart.
 const describeCheckFailure = (err) => {
   if (err?.killed || err?.signal === 'SIGTERM' || err?.code === 'ETIMEDOUT') {
-    return `node --check timed out after 30000ms${err.signal ? ` (signal ${err.signal})` : ''}`;
+    return `node --check timed out after ${NODE_CHECK_TIMEOUT_MS}ms${err.signal ? ` (signal ${err.signal})` : ''}`;
   }
   const stderr = String(err?.stderr ?? '').trim();
   if (!stderr) return `no stderr (exit ${err?.code ?? 'unknown'})`;
@@ -380,25 +788,11 @@ const describeCheckFailure = (err) => {
   return clipped.replace(/\n/g, '\n    ');
 };
 
-const syntaxWorker = async () => {
-  for (let i = nextSyntaxIdx++; i < mjsFiles.length; i = nextSyntaxIdx++) {
-    try {
-      await execFileAsync(NODE, ['--check', mjsFiles[i]], { cwd: ROOT, timeout: 30000 });
-      syntaxOk[i] = true;
-    } catch (err) {
-      syntaxOk[i] = false;
-      syntaxDetail[i] = describeCheckFailure(err);
-    }
-  }
-};
-await Promise.all(
-  Array.from({ length: Math.min(SYNTAX_POOL_SIZE, mjsFiles.length) }, syntaxWorker)
-);
 mjsFiles.forEach((f, i) => {
-  if (syntaxOk[i]) {
+  if (!syntaxErrors[i]) {
     pass(`${f} syntax OK`);
   } else {
-    fail(`${f} has syntax errors\n    ${syntaxDetail[i] ?? 'no diagnostic captured'}`);
+    fail(`${f} has syntax errors\n    ${describeCheckFailure(syntaxErrors[i])}`);
   }
 });
 
@@ -2572,7 +2966,7 @@ if (/language:\s*\n(?:\s*#.*\n)*\s*output:\s*["']?en["']?/.test(profileExample))
 // normalization out of readTextLF fails this check on every platform. The
 // fixture lives under ROOT because readFile resolves ROOT-relative paths.
 try {
-  const crlfGuardTmp = mkdtempSync(join(ROOT, 'crlf-guard-'));
+  const crlfGuardTmp = mkdtempSync(join(ROOT, `${SCRATCH_PREFIX}crlf-guard-`));
   try {
     writeFileSync(
       join(crlfGuardTmp, 'crlf-fixture.md'),
@@ -17226,7 +17620,7 @@ try {
   }
 
   // 4. Test doctor.mjs respects target directory or target override when CAREER_OPS_ROOT is set
-  const tempTarget = mkdtempSync(join(ROOT, 'co-temp-target-'));
+  const tempTarget = mkdtempSync(join(ROOT, `${SCRATCH_PREFIX}co-temp-target-`));
   try {
     process.env.CAREER_OPS_ROOT = tempTarget;
     const r = JSON.parse(run(NODE, ['doctor.mjs', '--json']) || '{}');
@@ -17254,7 +17648,7 @@ try {
   }
 
   // 5. Test normalize-statuses respects CAREER_OPS_ROOT and does not touch main repo tracker
-  const tempRoot = mkdtempSync(join(ROOT, 'co-temp-root-'));
+  const tempRoot = mkdtempSync(join(ROOT, `${SCRATCH_PREFIX}co-temp-root-`));
   const tempTrackerDir = join(tempRoot, 'data');
   mkdirSync(tempTrackerDir, { recursive: true });
   const tempTracker = join(tempTrackerDir, 'applications.md');
@@ -17284,7 +17678,7 @@ try {
   }
 
   // 6. Test .career-ops-data marker file resolution
-  const tempMarkerRoot = mkdtempSync(join(ROOT, 'co-temp-marker-'));
+  const tempMarkerRoot = mkdtempSync(join(ROOT, `${SCRATCH_PREFIX}co-temp-marker-`));
   const markerFile = join(ROOT, '.career-ops-data');
   const originalRootEnv = process.env.CAREER_OPS_ROOT;
   const originalDataDirEnv = process.env.CAREER_OPS_DATA_DIR;
@@ -19107,7 +19501,7 @@ console.log('\n73. Gemini evaluator and encoding');
 
 let geminiTmp = null;
 try {
-  geminiTmp = mkdtempSync(join(ROOT, 'co-gemini-'));
+  geminiTmp = mkdtempSync(join(ROOT, `${SCRATCH_PREFIX}co-gemini-`));
   const configDir = join(geminiTmp, 'config');
   const modesDir = join(geminiTmp, 'modes', 'tr');
   mkdirSync(configDir, { recursive: true });
@@ -19244,6 +19638,18 @@ try {
   }
 } catch (e) {
   fail(`sponsors check: ${e.message}`);
+}
+// ── INLINE SECTIONS: END ────────────────────────────────────────
+
+if (INLINE_CHILD !== null) {
+  inlineSectionsCompleted = true;
+  inlineRunnerFailed = Boolean(process.exitCode);
+  // Whatever is still queued for a pipe is lost to an exit; the parent prints
+  // the suites straight after, so a cut here would be a hole in mid-log.
+  await new Promise((resolve) => process.stdout.write('', resolve));
+  await new Promise((resolve) => process.stderr.write('', resolve));
+  // exit(), as finish() does: a section may have left a handle open.
+  process.exit(0);
 }
 
 await runDiscovered();

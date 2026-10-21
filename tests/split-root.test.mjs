@@ -192,6 +192,7 @@ const WORKER_STUB = [
   'num="$(field "Report number")"; id="$(field "Batch ID")"; date="$(field "Date")"',
   'root="$(sed -n \'s/^Data root: //p\' "$promptfile" | head -n 1)"',
   '[[ -n "$root" ]] || root="$PWD"',
+  'case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) root="$(cygpath -u "$root")";; esac',
   '[[ "${WORKER_WRITES:-yes}" == "yes" ]] || exit 1',
   'mkdir -p "$root/reports" "$root/batch/tracker-additions"',
   'printf \'# Evaluation: Acme\\n\\n**Score:** 4.5/5\\n**URL:** https://example.com/one\\n**Legitimacy:** High\\n\\n## Job Description (archived verbatim)\\n\\nFixture JD.\\n\' > "$root/reports/$num-acme-$date.md"',

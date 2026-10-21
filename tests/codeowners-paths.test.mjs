@@ -54,12 +54,16 @@ ok('the plugin registry directory is owned, not the deleted single file', () => 
 // The router is whatever the CLI skill entrypoints actually link to, read from
 // the links themselves so a moved router fails here rather than going unowned.
 // A checkout without symlink support (Windows, core.symlinks=false) holds each
-// link as a one-line file naming its target, so read that form too.
+// link as a one-line target or a materialized canonical copy; read both forms.
 function linkTarget(p) {
   const abs = join(ROOT, p);
   if (!existsSync(abs)) return null;
   if (lstatSync(abs).isSymbolicLink()) return readlinkSync(abs);
   const text = readFileSync(abs, 'utf-8');
+  const canonical = join(ROOT, '.agents', 'skills', 'career-ops', 'SKILL.md');
+  if (abs !== canonical && text === readFileSync(canonical, 'utf-8')) {
+    return relative(dirname(abs), canonical);
+  }
   return text.length < 200 && /^[^\n]+SKILL\.md\s*$/.test(text) ? text.trim() : null;
 }
 const skillLinks = readdirSync(ROOT)

@@ -390,6 +390,8 @@ const SCOOP_ROOTS = [
 const WINDOWS_BASH_CANDIDATES = [
   'C:\\Program Files\\Git\\bin\\bash.exe',
   'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
+  'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+  'C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe',
   ...SCOOP_ROOTS.flatMap((root) => [
     join(root, 'apps', 'git', 'current', 'bin', 'bash.exe'),
     join(root, 'apps', 'git', 'current', 'usr', 'bin', 'bash.exe'),
@@ -402,6 +404,7 @@ const WINDOWS_BASH_CANDIDATES = [
 // resolve inside the shell that receives it.
 const WINDOWS_CYGPATH_CANDIDATES = [
   'C:\\Program Files\\Git\\usr\\bin\\cygpath.exe',
+  'C:\\Program Files (x86)\\Git\\usr\\bin\\cygpath.exe',
   ...SCOOP_ROOTS.map((root) => join(root, 'apps', 'git', 'current', 'usr', 'bin', 'cygpath.exe')),
 ];
 

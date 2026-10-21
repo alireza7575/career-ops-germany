@@ -733,7 +733,7 @@ function renderHtml(template, payload, templatePath) {
   // The summary is a scalar, so strip its wrapper when it renders no text.
   // Require a following marker to preserve a custom template's closing HTML.
   if (!substitutions.SUMMARY_TEXT.trim()) {
-    html = html.replace(/<!--\s+PROFESSIONAL SUMMARY\s+-->[\s\S]*?(?=<!--\s+[A-Z][A-Z ]*-->)/, '');
+    html = html.replace(/<!--\s+PROFESSIONAL SUMMARY\s+-->[\s\S]*?(?=<!--\s+[A-Z][A-Z ]*-->)/, ' ');
   }
   // Drop optional list sections that have no entries. See cv-sections-core.mjs.
   html = stripEmptySections(html, payload, 'html');
