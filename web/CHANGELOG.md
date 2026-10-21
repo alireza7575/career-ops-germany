@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.2](https://github.com/alireza7575/career-ops-germany/compare/web-v0.14.1...web-v0.14.2) (2026-10-21)
+
+
+### Bug Fixes
+
+* preserve funnel counts after Assessment stage update ([c0eae84](https://github.com/alireza7575/career-ops-germany/commit/c0eae845a807e3cb9f02797a185159fb6f3dc1d1))
+
 ## [0.14.1](https://github.com/alireza7575/career-ops-germany/compare/web-v0.14.0...web-v0.14.1) (2026-10-14)
 
 
