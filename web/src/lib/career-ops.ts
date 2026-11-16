@@ -289,7 +289,7 @@ export function doctorState(snapshot?: Pick<PipelineSummary, "applications" | "i
 } {
   const has = (rel: string) => {
     try {
-      return fs.existsSync(rel === "config/profile.yml" ? getProfilePath(careerOpsRoot()) : path.join(careerOpsRoot(), rel));
+      return fs.existsSync(path.join(careerOpsRoot(), rel));
     } catch {
       return false;
     }
@@ -300,7 +300,7 @@ export function doctorState(snapshot?: Pick<PipelineSummary, "applications" | "i
     ["modes/_profile.md", "modes/_profile.md"],
     ["portals.yml", "portals.yml"],
   ];
-  const missing = prereqs.filter(([rel]) => !has(rel)).map(([, label]) => label);
+  const missing = prereqs.filter(([rel, label]) => !(label === "config/profile.yml" ? fs.existsSync(getProfilePath(careerOpsRoot())) : has(rel))).map(([, label]) => label);
   const hasCv = has("cv.md");
   // Home already reads these files. Reuse that snapshot so its setup check
   // neither parses the tracker twice nor disagrees with the rendered queue.

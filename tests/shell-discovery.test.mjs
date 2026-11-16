@@ -56,3 +56,16 @@ test('lastRunFailure() clears after a command succeeds', () => {
   assert.equal(run(getBash(), ['-c', 'echo ok']), 'ok');
   assert.equal(lastRunFailure(), null);
 });
+
+test('a selected Git Bash survives a fixture PATH override', () => {
+  const bash = getBash();
+  if (process.platform !== 'win32' || bash === 'bash') return;
+  const parentPath = process.env.PATH;
+  assert.equal(run(bash, ['-c', 'echo retained'], { env: { ...process.env, PATH: '' } }), 'retained');
+  assert.equal(process.env.PATH, parentPath, 'the temporary parent PATH change must be restored');
+});
+
+test('run keeps shell syntax in argv even if a caller requests shell mode', () => {
+  const value = 'literal & echo injected';
+  assert.equal(run('node', ['-e', 'console.log(process.argv[1])', value], { shell: true }), value);
+});

@@ -69,12 +69,12 @@ test("pdf needs neither writes nor the network", () => {
   assert.equal(caps.network, false, "pdf reads local files only — no fetch");
 });
 
-test("only the persisting kinds may write", () => {
-  // Given the kinds that produce canonical artifacts (reports, tracker, portals)
+test("only the portal repair worker may write", () => {
+  // Report and tracker writes belong to the platform, outside the worker.
   const writers = KNOWN_KINDS.filter((k) => capabilitiesFor(k).writes);
 
-  // Then exactly those two, and nothing has quietly joined them.
-  assert.deepEqual(writers.sort(), ["evaluate", "fix-portal"]);
+  assert.deepEqual(writers, ["fix-portal"]);
+  assert.equal(capabilitiesFor("evaluate"), CAPS.webSearchOnly);
 });
 
 test("the policy and Claude's tool scope agree for every kind", () => {

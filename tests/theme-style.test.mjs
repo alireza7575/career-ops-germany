@@ -223,6 +223,7 @@ try {
     const targets = (sel, cls) => selectorList(sel).some((s) => new RegExp(`\\.${cls}(?![\\w-])`).test(subject(s)));
 
     const ROOT_DECLARED = {
+      'templates/cv-template.timeline.html': true,
       'templates/cv-template.html': true,
       'templates/cv-template.compact.html': true,
       'templates/cv-template.executive.html': true,

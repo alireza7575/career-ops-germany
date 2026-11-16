@@ -130,7 +130,10 @@ if (isMainModule(import.meta.url)) {
     } else if (cmd === 'check-path') {
       console.log(insideAnyRoot(arg));
     } else if (cmd === 'launch-options') {
-      console.log(JSON.stringify(defaultLaunchOptions()));
+      if (arg === 'headed') console.log(JSON.stringify(HEADED_APPLY_LAUNCH));
+      else if (arg === 'bundled') console.log(JSON.stringify(BUNDLED_HEADED_LAUNCH));
+      else if (arg === undefined) console.log(JSON.stringify(defaultLaunchOptions()));
+      else throw new ApplyScopeError('Unknown launch option.');
     } else {
       console.error('Usage: node apply-scope.mjs <root|check-path|launch-options>');
       process.exit(2);

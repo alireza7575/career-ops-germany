@@ -81,7 +81,8 @@ test("evaluation and PDF prompts resolve system and user files across roots", ()
   assert.match(evaluate, /C:\/Career Ops Engine\/modes\/de\/angebot\.md/);
   assert.match(evaluate, /C:\/Private Career Data\/modes\/_profile\.md/);
   assert.match(evaluate, /C:\/Private Career Data\/modes\/_custom\.md/);
-  assert.match(evaluate, /node 'C:\/Career Ops Engine\/merge-tracker\.mjs'/);
+  assert.match(evaluate, /<<report-md>>/);
+  assert.doesNotMatch(evaluate, /node 'C:\/Career Ops Engine\/merge-tracker\.mjs'/);
   const pdf = buildPrompt({ ...args, kind: "pdf", input: "12" });
   assert.match(pdf, /C:\/Career Ops Engine\/modes\/pdf\.md/);
   assert.match(pdf, /C:\/Private Career Data\/cv\.md/);

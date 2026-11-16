@@ -6,6 +6,8 @@ import { interpretFormWithAgent } from "./agent-interpret";
 import { resolveCli } from "../clis";
 import { fencingReport } from "../cli-fencing.mjs";
 import { CAPS } from "../worker-capabilities.mjs";
+import { execFileSync } from "node:child_process";
+import { resolveCodeRoot, resolveRootScript } from "../core/code-root.mjs";
 
 /** The frame with the most interactive controls — where the agentic interpreter
  *  should look when deterministic extraction found nothing usable. */
@@ -128,18 +130,18 @@ const SESSIONS: Map<string, Session> = (globalThis.__coApplySessions ??= new Map
 async function headedBrowser(): Promise<Browser> {
   const b = globalThis.__coHeadedBrowser;
   if (b && b.isConnected()) return b;
+  const scopeScript = resolveRootScript(resolveCodeRoot(process.cwd(), process.env), "apply-scope");
+  const launchOptions = (kind: "headed" | "bundled") => JSON.parse(execFileSync(process.execPath, [scopeScript, "launch-options", kind], { encoding: "utf8" }));
+  const HEADED_APPLY_LAUNCH = launchOptions("headed");
+  const BUNDLED_HEADED_LAUNCH = launchOptions("bundled");
   let nb: Browser;
   try {
-    nb = await chromium.launch({
-      channel: "chrome",
-      headless: false,
-      args: ["--window-position=-3200,-3200", "--window-size=1280,940"], // off-screen during fill; moved on-screen at handoff
-    });
+    nb = await chromium.launch(HEADED_APPLY_LAUNCH);
   } catch {
     // No system Google Chrome → fall back to Playwright's bundled Chromium if
     // present; otherwise a clear, actionable error.
     try {
-      nb = await chromium.launch({ headless: false, args: ["--window-position=-3200,-3200", "--window-size=1280,940"] });
+      nb = await chromium.launch(BUNDLED_HEADED_LAUNCH);
     } catch {
       throw new Error("The apply feature needs Google Chrome. Install Chrome (or run: npx playwright install chromium) and try again.");
     }

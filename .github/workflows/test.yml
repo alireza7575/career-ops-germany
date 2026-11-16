@@ -55,7 +55,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    # The arm64 macOS pool is failing to acquire runners; retain macOS coverage on Intel.
+    runs-on: ${{ matrix.os == 'macos-latest' && 'macos-15-intel' || matrix.os }}
     # Without a limit a hung job holds its runner for GitHub's default of six
     # hours. test-all.mjs kills a discovered suite that runs past its budget,
     # but its inline sections and the install steps have no limit of their

@@ -448,8 +448,7 @@ const WINDOWS_CYGPATH_CANDIDATES = [
 ];
 
 /**
- * Map a requested executable onto the harness allowlist, returning the
- * trusted literal (not the caller-supplied string).
+ * Validate the requested executable against the harness allowlist.
  *
  * @param {string} cmd - Requested executable.
  * @returns {string} Allowlisted executable path/name.
@@ -502,7 +501,32 @@ export function run(cmd, args = [], opts = {}) {
     : opts;
   opts = isolatedOpts;
   try {
-    return execFileSync(exe, args, { cwd: ROOT, encoding: 'utf-8', timeout: 30000, ...opts, shell: false }).trim();
+    const childOpts = { cwd: ROOT, encoding: 'utf-8', timeout: 30000, ...opts, shell: false };
+    let output;
+    if (exe === process.execPath) output = execFileSync(process.execPath, args, childOpts);
+    else if (exe === 'git') output = execFileSync('git', args, childOpts);
+    else if (exe === 'go') output = execFileSync('go', args, childOpts);
+    else if (exe === 'wsl') output = execFileSync('wsl', args, childOpts);
+    else if (exe === 'bash') output = execFileSync('bash', args, childOpts);
+    else {
+      if (!existsSync(exe)) throw Object.assign(new Error(`bash not found: ${exe}`), { code: 'ENOENT' });
+      const env = { ...childOpts.env ?? process.env };
+      const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
+      env[pathKey] = `${dirname(exe)}${delimiter}${env[pathKey] || ''}`;
+      // Windows resolves the executable against the parent's PATH, not the
+      // child env passed to execFileSync. This call is synchronous, so restore
+      // the parent PATH immediately after Node resolves the fixed 'bash' name.
+      const parentPathKey = Object.keys(process.env).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
+      const parentPath = process.env[parentPathKey];
+      process.env[parentPathKey] = `${dirname(exe)}${delimiter}${parentPath || ''}`;
+      try {
+        output = execFileSync('bash', args, { ...childOpts, env });
+      } finally {
+        if (parentPath === undefined) delete process.env[parentPathKey];
+        else process.env[parentPathKey] = parentPath;
+      }
+    }
+    return output.trim();
   } catch (e) {
     // execFileSync attaches the child's streams and exit status to the error.
     // Keep them: callers report failure as `<name> crashed`, and without this a

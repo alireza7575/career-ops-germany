@@ -96,7 +96,7 @@ export function scopeFrom(allowed) {
  * stream and need no write tool at all — pdf emits its CV in a `<<cv-html>>`
  * envelope the backend persists (#2185), and research only reports.
  *
- * The split between the two read-only scopes is the network axis. It used to be
+ * The split between the read-only scopes is the network axis. It used to be
  * absent: a single `readOnly` scope granted WebFetch/WebSearch to every
  * non-writing kind, so pdf declared `network: false`, was DNS-blocked under
  * Codex's sandbox, and could still fetch on Claude — the drift the shared policy
@@ -104,11 +104,12 @@ export function scopeFrom(allowed) {
  * modes/pdf.md, cv.md, the profile, the report and the template; it has no reason
  * to reach the network on either runtime.
  *
- * @type {{persisting: ToolScope, networkReadOnly: ToolScope, localReadOnly: ToolScope}}
+ * @type {{persisting: ToolScope, networkReadOnly: ToolScope, searchReadOnly: ToolScope, localReadOnly: ToolScope}}
  */
 export const TOOL_SCOPES = Object.freeze({
   persisting: scopeFrom("Read,WebFetch,WebSearch,Write,Edit,Bash,Glob,Grep"),
   networkReadOnly: scopeFrom("Read,WebFetch,WebSearch,Glob,Grep"),
+  searchReadOnly: scopeFrom("Read,WebSearch,Glob,Grep"),
   localReadOnly: scopeFrom("Read,Glob,Grep"),
 });
 
@@ -127,7 +128,9 @@ export const TOOL_SCOPES = Object.freeze({
 export function toolScopeFor(kind) {
   const { writes, network } = capabilitiesFor(kind);
   if (writes) return TOOL_SCOPES.persisting;
-  return network ? TOOL_SCOPES.networkReadOnly : TOOL_SCOPES.localReadOnly;
+  if (network === "fetch") return TOOL_SCOPES.networkReadOnly;
+  if (network === "search") return TOOL_SCOPES.searchReadOnly;
+  return TOOL_SCOPES.localReadOnly;
 }
 
 /**
@@ -225,7 +228,7 @@ export function verifyClaudeArgs(args, capabilities) {
   // written to catch it.
   const forbidden = [
     ...(capabilities.writes ? [] : WRITE_CAPABLE_TOOLS),
-    ...(capabilities.network ? [] : NETWORK_TOOLS),
+    ...(capabilities.network === "fetch" ? [] : capabilities.network === "search" ? ["WebFetch"] : NETWORK_TOOLS),
   ];
   const denied = toolNames(argValue(args, "--disallowedTools"));
   const unmentioned = forbidden.filter((tool) => !denied.includes(tool));

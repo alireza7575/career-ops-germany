@@ -7,12 +7,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { cliSubstitutionNotice, cliUnavailableError, resolveCliOrFallback } from "@/lib/clis";
 import { localISODate } from "@/lib/followups";
-import { accumulateTokens, hasNewCompletedReport, isFatalGenericStderr, killMsForKind, timeoutMessage } from "@/lib/run-cli-support.mjs";
+import { accumulateTokens, isFatalGenericStderr, killMsForKind, timeoutMessage } from "@/lib/run-cli-support.mjs";
 import { spawnHeadlessCli } from "@/lib/spawn-cli.mjs";
 import { careerOpsRoot, careerOpsCodeRoot, readMemory, findReportFile, readInbox, readScanDates, readLanguageConfig } from "@/lib/career-ops";
 import { resolvePdfPaths, type PdfPaths } from "@/lib/pdf-paths.mjs";
 import { renderAndMarkPdf, writeCvHtml, pdfRunOutcome } from "@/lib/pdf-render.mjs";
 import { createCvEnvelopeFilter, type CvEnvelope } from "@/lib/cv-envelope.mjs";
+import { createReportEnvelopeFilter } from "@/lib/report-envelope.mjs";
+import { evaluateRunOutcome, evaluationOutcomeEvent, persistEvaluation } from "@/lib/report-persist.mjs";
 import { buildPrompt, isShellSafeCompanyName, isShellSafeRootPath } from "@/lib/run-prompts.mjs";
 import { capabilitiesFor } from "@/lib/worker-capabilities.mjs";
 import { fencingReport, isCliAllowedForCapabilities } from "@/lib/cli-fencing.mjs";
@@ -21,10 +23,37 @@ import { resolveCvTemplate } from "@/lib/core/cv-template.mjs";
 import { profileRef } from "@/lib/core/profile-path.mjs";
 import { acquireTrackerWrite, releaseTrackerWrite } from "@/lib/core/run-registry";
 import { createRunFinalizer } from "@/lib/run-finalizer.mjs";
+import { prefetchJd, postingUrlFrom } from "@/lib/jd-prefetch.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 800; // a real oferta evaluation / pdf-mode CV tailoring + render is heavy and multi-step
+
+function fetchJdScript(codeRoot: string, dataRoot: string, url: string, signal: AbortSignal): Promise<{ code: number; stdout: string; timedOut: boolean; spawnFailed: boolean }> {
+  return new Promise((resolve) => {
+    const script = path.join(/* turbopackIgnore: true */ codeRoot, "fetch-jd.mjs");
+    const child = spawn(process.execPath, [script, url], { cwd: dataRoot, env: { ...process.env, CAREER_OPS_ROOT: dataRoot }, windowsHide: true });
+    let stdout = "";
+    let timedOut = false;
+    let settled = false;
+    const finish = (code: number, spawnFailed = false) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      resolve({ code, stdout, timedOut, spawnFailed });
+    };
+    const abort = () => child.kill("SIGTERM");
+    const timer = setTimeout(() => { timedOut = true; abort(); }, 30_000);
+    signal.addEventListener("abort", abort, { once: true });
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+      if (stdout.length > 1_000_000) abort();
+    });
+    child.on("close", (code) => finish(code ?? 1));
+    child.on("error", () => finish(1, true));
+  });
+}
 
 export async function POST(req: Request) {
   let body: { kind?: string; input?: string; cliId?: string };
@@ -52,6 +81,9 @@ export async function POST(req: Request) {
   const cliId = spec.id;
   const substitution = cliSubstitutionNotice(resolved);
   const capabilities = capabilitiesFor(kind);
+  if (kind === "evaluate" && fencingReport({ cliId, cliName: spec.name, capabilities }).level !== "full") {
+    return Response.json({ error: `CLI '${cliId}' cannot run a read-only evaluation with a verified permission fence.` }, { status: 400 });
+  }
   if (!isCliAllowedForCapabilities(cliId, capabilities)) {
     return new Response(
       JSON.stringify({ error: `CLI '${cliId}' cannot run write-capable worker '${kind}' without a verified permission adapter.` }),
@@ -130,6 +162,24 @@ export async function POST(req: Request) {
     kind === "evaluate"
       ? readInbox().find((j) => j.url === input)?.postedAt ?? readScanDates().get(input)
       : undefined;
+  let jdText: string | undefined;
+  if (kind === "evaluate") {
+    if (postingUrlFrom(input)) {
+      const prefetch = await prefetchJd(input, (_script: string, args: string[], options?: { signal?: AbortSignal }) =>
+        fetchJdScript(careerOpsCodeRoot(), careerOpsRoot(), args[0], options?.signal ?? req.signal), req.signal);
+      if (prefetch.closedEvidence) {
+        return Response.json({ error: `The posting appears closed: ${prefetch.closedEvidence}` }, { status: 422 });
+      }
+      if (!prefetch.text) {
+        return Response.json({ error: "The posting could not be read completely. Paste the full job description or evaluate it in the CLI; no report was saved." }, { status: 422 });
+      }
+      jdText = prefetch.text;
+    } else if (input.trim().length >= 400) {
+      jdText = input;
+    } else {
+      return Response.json({ error: "Provide a posting URL or the full job description; no report was saved." }, { status: 400 });
+    }
+  }
   // Which CV template the worker fills. Resolved HERE, for the same reason `lang`
   // is: the worker has no Bash (#2172), so it cannot run cv-templates.mjs and the
   // prompt used to name the base template outright, silently ignoring cv.template
@@ -137,7 +187,7 @@ export async function POST(req: Request) {
   // The root is passed, not re-derived: a relative CAREER_OPS_PROFILE resolves
   // against it, and `process.cwd()` here is `<core>/web` (see cv-template.mjs).
   const cvTemplate = kind === "pdf" ? await resolveCvTemplate(careerOpsRoot(), careerOpsCodeRoot()) : undefined;
-  const prompt = buildPrompt({ kind, input, memory: readMemory(), today, postedAt, lang, cvTemplate, dataRoot: careerOpsRoot(), codeRoot: careerOpsCodeRoot(), profile: profileRef(careerOpsRoot()) });
+  const prompt = buildPrompt({ kind, input, memory: readMemory(), today, postedAt, jdText, lang, cvTemplate, dataRoot: careerOpsRoot(), codeRoot: careerOpsCodeRoot(), profile: profileRef(careerOpsRoot()) });
 
   const isClaude = cliId === "claude";
   // Which tools each kind gets, and the whole claude argv, live in
@@ -155,21 +205,6 @@ export async function POST(req: Request) {
   // envelope-parsing routes rely on.
   const args = isClaude ? claudeCliArgs({ kind, prompt }) : (spec.streamArgs ?? spec.args)(prompt);
 
-  // For write-needing kinds, snapshot reports/ so we can verify the worker
-  // actually persisted (non-Claude CLIs lack Write auth and silently no-op).
-  // Names, not a count: reserving a number writes reports/NNN-RESERVED.md and the
-  // final report REPLACES it, so the `.md` count is unchanged and a count-delta
-  // gate reported "didn't save a report" for an evaluation that saved fine (#2085).
-  const reportsDir = path.join(careerOpsRoot(), "reports");
-  const reportEntries = () => {
-    try {
-      return fs.readdirSync(reportsDir);
-    } catch {
-      return [];
-    }
-  };
-  const persists = kind === "evaluate";
-  const reportsBefore = persists ? reportEntries() : [];
   // Tracker-mutating runs hold a write token so a row delete can't race their merge
   // (tracker.mjs delete doesn't yet share a lock with merge-tracker — see run-registry).
   const writeToken = kind === "evaluate" || kind === "pdf" ? acquireTrackerWrite() : null;
@@ -225,6 +260,7 @@ export async function POST(req: Request) {
   // until that work actually settles, instead of releasing the tracker-delete
   // guard while mark-pdf-ready.mjs is still actively writing applications.md.
   let pdfRenderPromise: Promise<void> | null = null;
+  let evaluationPromise: Promise<void> | null = null;
   // Cancellation only requests termination. Keep the guard until the child
   // actually closes and any render/mark work has finished.
   const finishRun = createRunFinalizer(child, () => {
@@ -335,6 +371,8 @@ export async function POST(req: Request) {
       // holding the 15-25 KB body out of the run log, which is the agent's
       // narration — see cv-envelope.mjs.
       const cvFilter = kind === "pdf" ? createCvEnvelopeFilter() : null;
+      const reportFilter = kind === "evaluate" ? createReportEnvelopeFilter() : null;
+      let evaluationText = "";
       // While the agent emits the 15-25 KB <<cv-html>> envelope, cvFilter swallows
       // every byte, so the response stream goes completely silent for as long as
       // the model takes to write the CV — a minute or more. Nothing downstream can
@@ -344,7 +382,8 @@ export async function POST(req: Request) {
       // the stream never idles during the filtered phase. Unknown event types are
       // ignored by the client's switch, so this is safe for older tabs too.
       const sendAgentText = (text: string) => {
-        const visible = cvFilter ? cvFilter.push(text) : text;
+        if (reportFilter) evaluationText += text;
+        const visible = cvFilter ? cvFilter.push(text) : reportFilter ? reportFilter.push(text) : text;
         if (visible) send({ type: "text", text: visible });
       };
       /** Surface non-fatal issues in the run log rather than only a server log. */
@@ -538,17 +577,43 @@ export async function POST(req: Request) {
           return close();
         }
 
-        const wroteReport = hasNewCompletedReport(reportsBefore, reportEntries());
-        // Honesty gate (#9): a green "done" with a parsed score requires a CLEAN exit,
-        // real output, AND (for evaluations) a report actually written. Anything else
-        // is surfaced — an errored run must never be banked as a confident score.
         const baseErr = noOutputError();
+        if (kind === "evaluate") {
+          const tail = reportFilter?.flush();
+          if (tail) send({ type: "text", text: tail });
+          const envelope = reportFilter?.result();
+          const outcome = evaluateRunOutcome({ envelope, noOutputMessage: baseErr, sawError, cleanExit, text: evaluationText });
+          if (!outcome.ok) {
+            send(evaluationOutcomeEvent(outcome, { tokens: lastTokens, costUsd: lastCostUsd }));
+            return close();
+          }
+          if (envelope?.ok !== true) {
+            send({ type: "error", msg: "Internal error: no report envelope after the evaluation gate." });
+            return close();
+          }
+          evaluationPromise = (async () => {
+            try {
+              send({ type: "status", label: "Saving evaluation…" });
+              const saved = await persistEvaluation({
+                spawnFn: spawn, execPath: process.execPath,
+                root: careerOpsRoot(), coreRoot: careerOpsCodeRoot(),
+                markdown: envelope.markdown, url: input, today, postedAt,
+              });
+              if (!saved.ok) send({ type: "error", msg: saved.error });
+              else {
+                sendWarnings(saved.warnings);
+                send({ type: "done", tokens: lastTokens, costUsd: lastCostUsd });
+              }
+            } catch (e) {
+              send({ type: "error", msg: `Saving the evaluation failed: ${e instanceof Error ? e.message : String(e)}` });
+            } finally {
+              close();
+            }
+          })();
+          return;
+        }
         if (baseErr) {
           send({ type: "error", msg: baseErr });
-        } else if (persists && !wroteReport) {
-          // The worker ran but never wrote the report/tracker row (e.g. a CLI
-          // without file-write authorization) — surface it instead of a fake score.
-          send({ type: "error", msg: "This evaluation didn't save a report, so it's not in your tracker. Full evaluation is verified on Claude Code." });
         } else if (!cleanExit || sawError) {
           // Produced output (maybe even a report) but did NOT finish cleanly — flag it
           // instead of recording a confident score off a half-finished run. sawError
@@ -568,11 +633,11 @@ export async function POST(req: Request) {
       if (heartbeat) clearInterval(heartbeat);
       if (killer) clearTimeout(killer);
       try { child.kill("SIGTERM"); } catch { /* ignore */ }
-      if (pdfRenderPromise) {
+      if (pdfRenderPromise || evaluationPromise) {
         // Render/mark keeps running after this client disconnects — wait for
         // it to settle before releasing the guard, so a concurrent tracker
         // delete can't race mark-pdf-ready.mjs's still-in-flight write.
-        pdfRenderPromise.finally(finishRun);
+        (pdfRenderPromise || evaluationPromise)?.finally(finishRun);
       } else {
         finishRun();
       }

@@ -64,6 +64,7 @@ const FULL = {
   awards: [{ title: 'A' }],
   interests: ['Chess'],
   skills: [{ category: 'S', items: 'x' }],
+  languages: [{ category: 'English', items: 'C1' }],
 };
 
 function check(label, actual, expected) {
