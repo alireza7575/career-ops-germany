@@ -439,14 +439,42 @@ export function archivedJdText(reportText, root) {
  * @param {string} html - HTML source.
  * @returns {string} Visible text.
  */
+function stripRawElement(html, tag) {
+  const lower = html.toLowerCase();
+  const open = `<${tag}`;
+  const close = `</${tag}`;
+  let from = 0;
+  let result = '';
+  while (true) {
+    const start = lower.indexOf(open, from);
+    if (start < 0) return result + html.slice(from);
+    const boundary = lower[start + open.length];
+    if (boundary && !/[\s/>]/.test(boundary)) {
+      result += html.slice(from, start + open.length);
+      from = start + open.length;
+      continue;
+    }
+    const endOfOpen = lower.indexOf('>', start + open.length);
+    if (endOfOpen < 0) return result + html.slice(from);
+    let search = endOfOpen + 1;
+    let end = -1;
+    while (end < 0) {
+      const endOfBody = lower.indexOf(close, search);
+      if (endOfBody < 0) return result + html.slice(from);
+      const afterTag = endOfBody + close.length;
+      if (/[\s/>]/.test(lower[afterTag] || '')) {
+        end = lower.indexOf('>', afterTag);
+        if (end < 0) return result + html.slice(from);
+      } else search = afterTag;
+    }
+    result += html.slice(from, start) + ' ';
+    from = end + 1;
+  }
+}
+
 export function htmlToText(html) {
-  return String(html || '')
-    // Strip comments first so a comment can't shelter a tag from the strips below.
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    // Match the full opening tag (incl. attributes) before the lazy body, and
-    // tolerate whitespace in the closing tag — a stricter filter CodeQL accepts.
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, ' ')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, ' ')
+  const noComments = String(html || '').replace(/<!--[\s\S]*?-->/g, ' ');
+  return stripRawElement(stripRawElement(noComments, 'script'), 'style')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&lt;/gi, '<')
@@ -863,6 +891,15 @@ function runSelfTest() {
   if (variantForms('aws').includes('aw')) failures.push('variantForms truncated acronym aws->aw');
   if (htmlToText('<style>.x{}</style><p>Python &amp; <b>gRPC</b></p>') !== 'Python & gRPC') {
     failures.push('htmlToText strip/decode');
+  }
+  if (htmlToText('<script type="text/javascript">hidden</script   ><style>secret</style><p>Visible</p>') !== 'Visible') {
+    failures.push('htmlToText script/style bodies');
+  }
+  if (htmlToText('<script>hidden</script-no>still hidden</script><p>Visible</p>') !== 'Visible') {
+    failures.push('htmlToText malformed closing tag');
+  }
+  if (htmlToText('<script>hidden</script\t\n bar><p>Visible</p>') !== 'Visible') {
+    failures.push('htmlToText closing tag with attributes');
   }
 
   const fromJd = keywordsFromJdText('Experience with Python and Docker required.');

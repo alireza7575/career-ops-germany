@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { listTemplates } from '../cv-templates.mjs';
+import { listTemplates, DEFAULT_TEMPLATES_DIR } from '../cv-templates.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const dir = mkdtempSync(join(tmpdir(), 'cv-shipped-templates-'));
@@ -42,14 +42,9 @@ writeFileSync(input, JSON.stringify({
   certifications: [],
   awards: [],
   skills: [{ category: 'Languages', items: ['Go', 'TypeScript'] }],
-  languages: [
-    { category: 'English', items: 'C1' },
-    { category: 'German', items: 'B2' },
-    { category: 'French', items: 'A2' },
-  ],
 }));
 
-const templates = listTemplates('cv');
+const templates = listTemplates('cv', { dir: DEFAULT_TEMPLATES_DIR });
 
 test('the shipped template list includes a pack', () => {
   assert.ok(templates.some((template) => template.pack));

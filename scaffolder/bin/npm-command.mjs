@@ -7,36 +7,36 @@
 // on every current Node, and `npx @santifer/career-ops init` left every Windows
 // user with a clone and no dependencies.
 //
-// `shell: true` would work but concatenates args unescaped (DEP0190), so this
-// avoids it. On Windows, prefer running npm's own JS entrypoint with the
-// current Node: `npx` exports it as npm_execpath, so it is the same npm the
-// user just invoked. Only an actual npm-cli.js is trusted — under `pnpm dlx`
-// or `bunx`, npm_execpath names a different package manager. Otherwise, hand
-// cmd.exe one fixed command string. macOS and Linux run `npm` directly, as
-// before.
+// On Windows run npm's JS entrypoint with Node. npx exports it as npm_execpath;
+// direct invocations find the npm bundled with Node or next to npm.cmd on PATH.
+// Never pass an environment-derived command string to cmd.exe.
 
-const SAFE_ARG = /^[\w.@=:/-]+$/;
+import { existsSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
+
 const NPM_CLI_JS = /[\\/]npm-cli\.(?:c|m)?js$/i;
 
 /**
  * Returns `{ file, args }` for execFileSync/spawnSync to run `npm <npmArgs>`.
- * `npmArgs` must be plain tokens (e.g. "install", "--version"): on the
- * cmd.exe fallback they are joined into a command line, so anything that
- * needs quoting or could be read as shell syntax is refused.
+ * Arguments are passed separately to Node, never interpreted by a shell.
  */
 export function npmCommand(npmArgs, {
   platform = process.platform,
   env = process.env,
   execPath = process.execPath,
 } = {}) {
-  for (const arg of npmArgs) {
-    if (!SAFE_ARG.test(arg)) throw new Error(`npmCommand: refusing unsafe npm argument ${JSON.stringify(arg)}`);
-  }
   if (platform !== "win32") return { file: "npm", args: [...npmArgs] };
 
   const npmCli = env.npm_execpath;
   if (npmCli && NPM_CLI_JS.test(npmCli)) return { file: execPath, args: [npmCli, ...npmArgs] };
 
-  // /d skips AutoRun commands, /s keeps the quoted command line intact.
-  return { file: env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", ["npm", ...npmArgs].join(" ")] };
+  const candidates = [join(dirname(execPath), "node_modules", "npm", "bin", "npm-cli.js")];
+  for (const dir of (env.PATH || "").split(delimiter)) {
+    if (dir && existsSync(join(dir, "npm.cmd"))) {
+      candidates.push(join(dir, "node_modules", "npm", "bin", "npm-cli.js"));
+    }
+  }
+  const bundled = candidates.find((candidate) => existsSync(candidate));
+  if (!bundled) throw new Error("npmCommand: npm-cli.js was not found beside Node or npm.cmd on PATH");
+  return { file: execPath, args: [bundled, ...npmArgs] };
 }

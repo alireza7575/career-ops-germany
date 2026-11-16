@@ -99,6 +99,8 @@ language:
 
 Optional [German screening rules](templates/custom.germany.example.md) belong in your data folder's `modes/_custom.md`. Personal targeting belongs in `config/profile.yml` and `modes/_profile.md`.
 
+For Codex interactive and headless usage, see [docs/CODEX.md](docs/CODEX.md). You can also run `codex exec "Run career-ops scan mode"` from the code folder; ordinary-language prompts work without slash commands.
+
 ## Daily use
 
 Run your agent from the code folder. It reads and writes career files in the configured data folder.
@@ -149,6 +151,26 @@ Keep your personal data repository separate and back it up. Its ignore rules are
 | CI fails after an update | Inspect failures before merging; preserved fork code and newer upstream contracts may need reconciliation. |
 
 More help: [German-market guide](docs/GERMAN_MARKET.md) · [Private data troubleshooting](docs/PRIVATE_DATA_REPO.md#troubleshooting) · [Supported boards](docs/SUPPORTED_JOB_BOARDS.md) · [FAQ](docs/FAQ.md) · [Data contract](DATA_CONTRACT.md).
+
+## You don't have to search alone
+
+Find the original project's community and contribution guide in [upstream Career-Ops](https://github.com/career-ops-hq/career-ops).
+
+## Sponsors
+
+career-ops is free for candidates, forever. These companies sponsor the project:
+
+<p align="center">
+  <a href="https://serpapi.com/career-ops-org" title="SerpApi"><img src="docs/sponsors/serpapi.svg" alt="SerpApi" height="48"></a>
+</p>
+
+<p align="center"><strong>SerpApi</strong> · Build a portfolio project with live search data. SerpApi gives developers structured JSON/Markdown from Google Search, Maps, Shopping, and other engines through a simple API call.</p>
+
+> Sponsorship buys clearly labeled visibility, never influence: no amount of money changes the roadmap or places anything in the product. Sponsors never appear in evaluations, rankings or recommendations.
+
+## What career-ops does for you
+
+The upstream pipeline provides evaluation, CV drafting, application tracking and interview preparation. This fork adapts the workflow for the German market.
 
 ## Upstream credits and license
 

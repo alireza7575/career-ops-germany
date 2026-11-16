@@ -60,7 +60,7 @@ const workdayOtherTenant = { url: 'https://other.wd5.myworkdayjobs.com/External/
   const job = { url: 'https://boards.greenhouse.io/acme/jobs/12345?gh_src=abc' };
   const token = dedupTokenFor(job, greenhouseModule.default);
   const urlKey = normalizeUrlForDedup(job.url);
-  if (token === 'greenhouse:12345' && token === seenJobKey(job.url) && urlKey.includes('boards.greenhouse.io') && urlKey.includes('gh_jid') === false) {
+  if (token === 'greenhouse:12345' && token === seenJobKey(job.url) && new URL(urlKey).hostname === 'boards.greenhouse.io' && !new URL(urlKey).searchParams.has('gh_jid')) {
     pass('dedupTokenFor() falls back to the same-job key; normalizeUrlForDedup stays a URL');
   } else {
     fail(`dedupTokenFor() fallback mismatch: ${JSON.stringify({ token, urlKey })}`);

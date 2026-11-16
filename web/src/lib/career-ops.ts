@@ -5,6 +5,7 @@ import { atomicWrite } from "@/lib/core/safe-write";
 import { resolveDataRoot } from "@/lib/core/data-root.mjs";
 import { readTrackerFile } from "@/lib/core/tracker-files.mjs";
 import { resolveCodeRoot, resolveRootScript } from "@/lib/core/code-root.mjs";
+import { getProfilePath } from "@/lib/core/profile-path.mjs";
 import { parseApplications } from "@/lib/tracker-table.mjs";
 import { parseStatusLog } from "@/lib/pipeline-sankey.mjs";
 // Pipeline rows are parsed in a plain .mjs for the same reason as
@@ -286,14 +287,14 @@ export function doctorState(snapshot?: Pick<PipelineSummary, "applications" | "i
 } {
   const has = (rel: string) => {
     try {
-      return fs.existsSync(path.join(careerOpsRoot(), rel));
+      return fs.existsSync(path.isAbsolute(rel) ? rel : path.join(careerOpsRoot(), rel));
     } catch {
       return false;
     }
   };
   const prereqs: [string, string][] = [
     ["cv.md", "cv.md"],
-    ["config/profile.yml", "config/profile.yml"],
+    [getProfilePath(careerOpsRoot()), "config/profile.yml"],
     ["modes/_profile.md", "modes/_profile.md"],
     ["portals.yml", "portals.yml"],
   ];
@@ -566,7 +567,7 @@ export function readLanguageConfig(): LanguageConfig {
   let modesDirs = ["modes/de"];
   let output = "en";
   try {
-    const parsed = yaml.load(fs.readFileSync(path.join(root, "config", "profile.yml"), "utf8"));
+    const parsed = yaml.load(fs.readFileSync(getProfilePath(root), "utf8"));
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       const language = (parsed as Record<string, unknown>).language;
       if (language && typeof language === "object" && !Array.isArray(language)) {

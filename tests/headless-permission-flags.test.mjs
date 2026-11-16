@@ -79,7 +79,7 @@ function isScannedFile(entry, dir) {
 // guard, so a linked worktree inside this one cannot feed its spawners in.
 function codeFiles() {
   return walkTree(ROOT, {
-    skip: (entry, dir) => (entry.isDirectory() ? SKIP_DIRS.has(entry.name) : !isScannedFile(entry, dir)),
+    skip: (entry, dir) => (entry.isDirectory() ? SKIP_DIRS.has(entry.name) || entry.name.startsWith('.next-') : !isScannedFile(entry, dir)),
   });
 }
 

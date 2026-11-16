@@ -7,7 +7,7 @@
 // Assertions run against rendered HTML rather than source patterns: the reorder
 // has to survive nested markup, comments, absent optional sections and a second
 // application, and none of that is observable from the source text.
-import { pass, fail, linkRepoPackage, ROOT, NODE } from './helpers.mjs';
+import { pass, fail, linkRepoPackage, ownRootEnv, ROOT, NODE, SANDBOX_DATA_ROOT } from './helpers.mjs';
 import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
@@ -33,7 +33,6 @@ const RENDERED_TITLES = {
   SECTION_EDUCATION: 'Education',
   SECTION_CERTIFICATIONS: 'Certifications',
   SECTION_AWARDS: 'Awards & Honors',
-  SECTION_LANGUAGES: 'Languages',
   SECTION_INTERESTS: 'Interests',
   SECTION_SKILLS: 'Skills',
 };
@@ -247,14 +246,14 @@ try {
   // Asserted against a written-out vocabulary, not against CV_SECTION_KEYS:
   // checking the message with the same list the message is built from would
   // pass however many sections the implementation actually knows about.
-  const EXPECTED_KEYS = ['summary', 'competencies', 'experience', 'projects', 'education', 'certifications', 'awards', 'languages', 'interests', 'skills'];
+  const EXPECTED_KEYS = ['summary', 'competencies', 'experience', 'projects', 'education', 'certifications', 'awards', 'interests', 'skills'];
   if (typo.warnings.some(w => EXPECTED_KEYS.every(k => w.includes(k)))) {
-    pass('the unrecognized-name warning lists all ten recognized section keys');
+    pass('the unrecognized-name warning lists all nine recognized section keys');
   } else {
     fail(`the warning should list the recognized keys: ${JSON.stringify(typo.warnings)}`);
   }
   if (EXPECTED_KEYS.every(k => CV_SECTION_KEYS.includes(k)) && CV_SECTION_KEYS.length === EXPECTED_KEYS.length) {
-    pass('CV_SECTION_KEYS includes every canonical section the alias table produces');
+    pass('CV_SECTION_KEYS is exactly the nine canonical sections the alias table produces');
   } else {
     fail(`CV_SECTION_KEYS => ${JSON.stringify(CV_SECTION_KEYS)}`);
   }
@@ -651,21 +650,6 @@ try {
     return html;
   };
 
-  const timeline = renderTemplate('cv-template.timeline.html');
-  const movedLanguages = captureWarnings(() => reorderCvSections(timeline, ['education', 'languages']));
-  const movedTitles = renderedTitles(movedLanguages.value);
-  if (sectionKey('Languages') === 'languages'
-      && sectionKey('Language Skills') === 'languages'
-      && sectionKey('Sprachen') === 'languages'
-      && sectionKey('Sprachkenntnisse') === 'languages'
-      && movedTitles.indexOf('Education') < movedTitles.indexOf('Languages')
-      && movedTitles.includes('Languages')
-      && !movedLanguages.warnings.some(w => w.includes('not a CV section') || w.includes('matched no section'))) {
-    pass('timeline Languages section moves through cv.sections with English and German aliases');
-  } else {
-    fail(`timeline Languages ordering: ${JSON.stringify(movedTitles)} warnings=${JSON.stringify(movedLanguages.warnings)}`);
-  }
-
   // Every section the template carries must be movable — checked by reversing
   // all of them at once, so a section the extractor silently can't reach shows
   // up as one that stayed put. Asserting only the Skills/Education pair would
@@ -1005,7 +989,10 @@ ${sections.join('\n')}</div>
 //    shape tests/generate-pdf-batch.test.mjs uses), so the assertion reads the
 //    order that was actually about to be PRINTED, not the order of the input file.
 {
-  const outputRoot = join(ROOT, 'output');
+  // Under the suite's own data root, not the checkout's output/: that
+  // directory is the developer's, and an interrupted run left this fixture in
+  // it (#5113).
+  const outputRoot = join(SANDBOX_DATA_ROOT, 'output');
   mkdirSync(outputRoot, { recursive: true });
   // realpathSync: see tests/generate-pdf-page-budget.test.mjs -- argv[1] keeps the
   // caller's spelling while import.meta.url is realpathed, so a symlinked
@@ -1031,6 +1018,12 @@ ${sections.join('\n')}</div>
     // lib/page-format.mjs owns the paper size generate-pdf.mjs imports at
     // module scope, so the copy needs it for the same reason.
     copyFileSync(join(ROOT, 'lib', 'page-format.mjs'), join(sandbox, 'lib', 'page-format.mjs'));
+    copyFileSync(join(ROOT, 'lib', 'browser-launch.mjs'), join(sandbox, 'lib', 'browser-launch.mjs'));
+    // pipeline-lock.mjs runs the shared lock protocol from lib/dir-lock.mjs (#5358).
+    copyFileSync(join(ROOT, 'lib', 'dir-lock.mjs'), join(sandbox, 'lib', 'dir-lock.mjs'));
+    copyFileSync(join(ROOT, 'lib', 'yaml-document.mjs'), join(sandbox, 'lib', 'yaml-document.mjs'));
+    // generate-pdf.mjs dates its PDF index row with lib/local-today.mjs.
+    copyFileSync(join(ROOT, 'lib', 'local-today.mjs'), join(sandbox, 'lib', 'local-today.mjs'));
 
     // theme-style.mjs and tracker-utils.mjs both `import * as yaml from
     // 'js-yaml'`, resolved by walking up into the repo's node_modules -- from
@@ -1100,8 +1093,7 @@ export const chromium = {
     writeFileSync(manifest, JSON.stringify([{ input: 'in.html', output: 'out/in.pdf' }]), 'utf-8');
 
     const run = spawnSync(NODE, [script, `--batch=${manifest}`], {
-      cwd: sandbox, encoding: 'utf-8', timeout: 60_000,
-      env: { ...process.env, CAREER_OPS_ROOT: sandbox, CAREER_OPS_TRACKER: join(sandbox, 'data', 'applications.md') },
+      cwd: sandbox, encoding: 'utf-8', timeout: 60_000, env: ownRootEnv(),
     });
     const outPdf = join(sandbox, 'out', 'in.pdf');
 
@@ -1147,7 +1139,10 @@ export const chromium = {
 //    The fixture puts the profile ONLY in the external workspace, so an
 //    __dirname-anchored read finds nothing and silently applies no order.
 {
-  const outputRoot = join(ROOT, 'output');
+  // Under the suite's own data root, not the checkout's output/: that
+  // directory is the developer's, and an interrupted run left this fixture in
+  // it (#5113).
+  const outputRoot = join(SANDBOX_DATA_ROOT, 'output');
   mkdirSync(outputRoot, { recursive: true });
   // realpathSync: see tests/generate-pdf-page-budget.test.mjs -- argv[1] keeps the
   // caller's spelling while import.meta.url is realpathed, so a symlinked
@@ -1173,6 +1168,12 @@ export const chromium = {
     // lib/page-format.mjs owns the paper size generate-pdf.mjs imports at
     // module scope, so the copy needs it for the same reason.
     copyFileSync(join(ROOT, 'lib', 'page-format.mjs'), join(sandbox, 'lib', 'page-format.mjs'));
+    copyFileSync(join(ROOT, 'lib', 'browser-launch.mjs'), join(sandbox, 'lib', 'browser-launch.mjs'));
+    // pipeline-lock.mjs runs the shared lock protocol from lib/dir-lock.mjs (#5358).
+    copyFileSync(join(ROOT, 'lib', 'dir-lock.mjs'), join(sandbox, 'lib', 'dir-lock.mjs'));
+    copyFileSync(join(ROOT, 'lib', 'yaml-document.mjs'), join(sandbox, 'lib', 'yaml-document.mjs'));
+    // generate-pdf.mjs dates its PDF index row with lib/local-today.mjs.
+    copyFileSync(join(ROOT, 'lib', 'local-today.mjs'), join(sandbox, 'lib', 'local-today.mjs'));
 
     // theme-style.mjs and tracker-utils.mjs both `import * as yaml from
     // 'js-yaml'`, resolved by walking up into the repo's node_modules -- from
@@ -1247,7 +1248,7 @@ export const chromium = {
       cwd: sandbox,
       encoding: 'utf-8',
       timeout: 60_000,
-      env: { ...process.env, CAREER_OPS_TRACKER: join(ws, 'data', 'applications.md') },
+      env: ownRootEnv({ CAREER_OPS_TRACKER: join(ws, 'data', 'applications.md') }),
     });
     const outPdf = join(ws, 'out', 'in.pdf');
 

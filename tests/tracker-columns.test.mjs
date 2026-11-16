@@ -38,7 +38,6 @@ import { canonicalizeTrackerPath } from '../path-resolver.mjs';
 import { mergeTracker } from '../merge-tracker.mjs';
 import { runTracker, removeRowByNum } from '../tracker.mjs';
 import { loadSeenCompanyRoles } from '../scan.mjs';
-import { trackerTsvLine } from '../lib/tracker-addition.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const NODE = process.execPath;
@@ -142,7 +141,10 @@ async function merge(sb, flags = {}) {
     additionsDir: sb.additions,
     batchStateFile: sb.batchState,
     lockDir: sb.lock,
-    flags,
+    // This suite exercises column-mapping behaviour using headerless fixtures;
+    // every merge here opts into that legacy path. Callers can pass
+    // allowHeaderless: false to exercise the new refusal path.
+    flags: { allowHeaderless: true, ...flags },
     logger,
   });
   return { code, stdout: text() };
@@ -253,7 +255,7 @@ describe('merge-tracker CLI: 10-column tracker', () => {
   let sb, res, cells;
   before(async () => {
     sb = makeSandbox(HEADER_10, { '2-globex.tsv': TSV_WITH_LOCATION });
-    res = await runScript('merge-tracker.mjs', [], sb);
+    res = await runScript('merge-tracker.mjs', ['--allow-headerless'], sb);
     // cells: ['', num, date, company, role, location, score, status, pdf, report, notes, '']
     cells = cellsOf(dataRows(sb.tracker).find(l => l.includes('Globex')));
   });
@@ -1175,14 +1177,17 @@ describe('headed additions: what optional-cell leniency must not accept', () => 
   });
 });
 
-// The core report writer emits this addition. A header spelled differently
-// than tracker-aliases.json knows would not go red anywhere:
+// The evaluate prompt no longer embeds a tracker row. The agent does not
+// write the addition. report-persist.trackerTsvLine is the web emitter, and
+// persist-evaluation-report.mjs writes those same bytes. A header spelled
+// differently than tracker-aliases.json knows would not go red anywhere:
 // merge-tracker would read the row as headerless and fall back to content
 // sniffing, the path that cannot order two dash sentinels. Assert the
 // emitter's own lines against the real ingest.
-describe('report persist emitter: TSV header matches the ingest contract', () => {
+describe('web persist emitter: TSV header matches the ingest contract', WEB, () => {
   let header, dataLine;
-  before(() => {
+  before(async () => {
+    const { trackerTsvLine } = await import('../web/src/lib/report-persist.mjs');
     const tsv = trackerTsvLine({
       num: '2', today: '2026-02-02', company: 'Globex', role: 'Manager',
       score: '4.5/5', reportFile: '2-globex-2026-02-02.md',
@@ -1190,16 +1195,16 @@ describe('report persist emitter: TSV header matches the ingest contract', () =>
       url: 'https://example.com/jobs/2',
     });
     const lines = tsv.replace(/\n$/, '').split('\n');
-    assert.equal(lines.length, 2, 'report persist emitter writes a header line and one data line');
+    assert.equal(lines.length, 2, 'web persist emitter writes a header line and one data line');
     header = lines[0].split('\t');
     dataLine = lines[1];
   });
 
-  test('report persist emitter: every header label resolves through tracker-aliases.json', () => {
+  test('web persist emitter: every header label resolves through tracker-aliases.json', () => {
     const { missing, duplicates, unknown } = resolveTsvColumns(header);
     assert.deepEqual({ missing, duplicates, unknown }, { missing: [], duplicates: [], unknown: [] });
   });
-  test('report persist emitter: the row it writes merges into the right columns', async () => {
+  test('web persist emitter: the row it writes merges into the right columns', async () => {
     assert.equal(dataLine.split('\t').length, header.length, `header labels ${header.length} columns but the data row shows ${dataLine.split('\t').length}`);
     const res = await mergeOne(`${header.join('\t')}\n${dataLine}\n`);
     assert.equal(res.merge.code, 0, res.merge.stdout);

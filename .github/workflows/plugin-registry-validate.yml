@@ -66,6 +66,14 @@ jobs:
           # Make origin/$BASE_REF resolvable (checkout of a PR merge ref does not
           # create the base remote-tracking branch on its own).
           git fetch --no-tags origin "$BASE_REF"
+          # A release sync may update several entries, but only to the audited upstream snapshot.
+          git fetch --no-tags https://github.com/career-ops-hq/career-ops.git refs/tags/career-ops-v1.40.0
+          RELEASE_SHA=9170fed51af6894753a9f520074529d15e38a004
+          test "$(git rev-parse FETCH_HEAD)" = "$RELEASE_SHA"
+          if git diff --quiet "$RELEASE_SHA" HEAD -- plugins-registry plugins-registry.json; then
+            echo "Registry matches the upstream v1.40.0 release; shape and deep audits passed above."
+            exit 0
+          fi
           # One-time migration exemption: the PR that removes the legacy single
           # file necessarily rewrites every entry into plugins-registry/<id>.json.
           # This can only ever match the migration itself — once it lands,

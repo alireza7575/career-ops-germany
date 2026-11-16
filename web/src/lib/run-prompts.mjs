@@ -9,6 +9,7 @@
  * drift). kind "research" stays read-only.
  */
 import { CV_ENVELOPE_INSTRUCTION } from "./cv-envelope.mjs";
+import { DEFAULT_PROFILE_REF, profileNote } from "./core/profile-path.mjs";
 
 /**
  * Is this company name safe to interpolate into a shell command inside a prompt?
@@ -104,9 +105,10 @@ function safeCvTemplate(value) {
     : BASE_CV_TEMPLATE;
 }
 
-export function buildPrompt({ kind, input, memory, today, postedAt, lang, cvTemplate, dataRoot, codeRoot }) {
+export function buildPrompt({ kind, input, memory, today, postedAt, lang, cvTemplate, dataRoot, codeRoot, profile = DEFAULT_PROFILE_REF }) {
   const codeFile = (rel) => codeRoot ? `${codeRoot.replace(/\\/g, "/")}/${rel}` : rel;
-  const userFile = (rel) => dataRoot ? `${dataRoot.replace(/\\/g, "/")}/${rel}` : rel;
+  const userFile = (rel) => rel === profile && rel !== DEFAULT_PROFILE_REF ? rel : dataRoot ? `${dataRoot.replace(/\\/g, "/")}/${rel}` : rel;
+  const profileLine = profileNote(profile);
   const splitRootNote = dataRoot && codeRoot
     ? `\nThe engine's mode files, templates and scripts are in ${codeRoot.replace(/\\/g, "/")}; the user's files and all generated reports/tracker additions are in ${dataRoot.replace(/\\/g, "/")}. Read and write user files using their absolute paths below. CAREER_OPS_ROOT points at the user data directory.\n`
     : "";
@@ -148,7 +150,7 @@ export function buildPrompt({ kind, input, memory, today, postedAt, lang, cvTemp
     : "";
   const marketNote = sharedMarketNote + marketSelectionNote;
   const languageDirective = `\n\nWrite all human-facing output in "${resolvedLang.output}" regardless of the language of these instructions or the job description.${marketNote}${splitRootNote}\n`;
-  const mem = (memory.trim() ? `\n\nDurable notes about the user (from their profile):\n${memory.trim()}\n` : "") + languageDirective;
+  const mem = profileLine + (memory.trim() ? `\n\nDurable notes about the user (from their profile):\n${memory.trim()}\n` : "") + languageDirective;
   if (kind === "research") {
     return `You are investigating the user's OWN work / portfolio to surface job-search-relevant strengths, headless. Investigate the target (use WebFetch for URLs; read local files if referenced) and report: what it is, why it is impressive, and how to leverage it in their job search — which roles/claims it supports and how to frame it on a CV. Be specific, honest, and encouraging. Report only: never submit, send, or click Apply anywhere, and contact no one — you are investigating the user's own work, not acting on it.${mem}
 
@@ -167,7 +169,7 @@ Target: ${input}`;
     // backend (a plain Node process, no CLI sandbox) writes and renders it, so
     // pdf mode runs with no write tool at all.
     return `You are tailoring the user's ATS-optimized CV for application #${input}, headless, on their machine. Run the REAL career-ops "pdf" mode's CONTENT step: follow ${codeFile("modes/pdf.md")}'s TAILORING rules exactly (do not improvise your own scoring or format). Apply its CONTENT rules — keyword injection, ordering, the competency grid, project selection, and its never-invent-a-skill rule. Its steps that shell out (the jd-skill-gap.mjs check) and its build/save/render steps are NOT performed on web runs; the platform handles output itself.${mem}
-1. Read ${codeFile("modes/pdf.md")}, ${userFile("cv.md")}, ${userFile("config/profile.yml")}, ${userFile("modes/_profile.md")}, ${userFile("modes/_custom.md")} when present, and the evaluation report at ${userFile(`reports/${input}-*.md`)} (for the JD keywords + analysis). User profile and custom rules take precedence over shipped mode examples.
+1. Read ${codeFile("modes/pdf.md")}, ${userFile("cv.md")}, ${userFile(profile)}, ${userFile("modes/_profile.md")}, ${userFile("modes/_custom.md")} when present, and the evaluation report at ${userFile(`reports/${input}-*.md`)} (for the JD keywords + analysis). User profile and custom rules take precedence over shipped mode examples.
 2. Tailor the CV per ${codeFile("modes/pdf.md")}: inject the JD's keywords into the summary + first bullets, reorder experience by relevance, build the competency grid, pick the top 3–4 projects. NEVER invent skills — only reword REAL experience using the JD's vocabulary.
 3. Fill ${codeFile(safeCvTemplate(cvTemplate))}'s {{...}} placeholders with the tailored content. Use that exact file: the platform already resolved it from cv.template through cv-templates.mjs, so do NOT run modes/pdf.md's own template-resolution step. ${CV_ENVELOPE_INSTRUCTION}
 4. Emit the envelope EXACTLY ONCE. The platform writes the HTML, renders the PDF, and updates the tracker's PDF column itself, only after a confirmed successful render. Do not submit anything anywhere.
@@ -254,7 +256,7 @@ End with EXACTLY one final line: VERDICT: {5 if now live, else 1}/5 — {what yo
   // core changes its mind, this follows instead of contradicting it.
   return `You are running the OFFICIAL career-ops job evaluation, HEADLESS, on the user's own machine. Today is ${today}. Run the REAL career-ops evaluation — do NOT improvise your own scoring.
 
-1. Read ${codeFile(resolvedLang.evalModeFile)} and follow it EXACTLY — EVERY section its report template specifies, in its order, including the Machine Summary. Do not treat any list of sections in THIS prompt as the set to produce; that file is the only source of truth for which sections exist. Ground the fit in THIS person: read ${userFile("cv.md")}, ${userFile("config/profile.yml")}, ${userFile("modes/_profile.md")}, and ${userFile("modes/_custom.md")} when present. User profile and custom rules override shipped examples of target roles or preferences.
+1. Read ${codeFile(resolvedLang.evalModeFile)} and follow it EXACTLY — EVERY section its report template specifies, in its order, including the Machine Summary. Do not treat any list of sections in THIS prompt as the set to produce; that file is the only source of truth for which sections exist. Ground the fit in THIS person: read ${userFile("cv.md")}, ${userFile(profile)}, ${userFile("modes/_profile.md")}, and ${userFile("modes/_custom.md")} when present. User profile and custom rules override shipped examples of target roles or preferences.
 
    Use WebFetch to read the posting (you are headless — Playwright is unavailable), and mark the report header "Verification: unconfirmed (batch mode)".
 

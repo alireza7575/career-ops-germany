@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { trackerTsvLine as coreLine } from "../lib/tracker-addition.mjs";
 import { writeEvaluationArtifacts } from "../persist-evaluation-report.mjs";
+import { describeSpawn, exitedNonZero } from './helpers/describe-spawn.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const SCRIPT = join(ROOT, "persist-evaluation-report.mjs");
@@ -55,16 +56,34 @@ test("persist-evaluation-report --help prints usage and exits 0", () => {
     cwd: ROOT,
     encoding: "utf8",
   });
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 0, describeSpawn(result));
   assert.match(result.stdout, /^Usage:/m);
 });
 
 test("persist-evaluation-report -h matches --help", () => {
   const long = spawnSync(process.execPath, [SCRIPT, "--help"], { cwd: ROOT, encoding: "utf8" });
   const short = spawnSync(process.execPath, [SCRIPT, "-h"], { cwd: ROOT, encoding: "utf8" });
-  assert.equal(short.status, 0, short.stderr);
+  assert.equal(short.status, 0, describeSpawn(short));
   assert.equal(short.stdout, long.stdout);
 });
+test("tracker addition builders in lib and web agree", async (t) => {
+  // web/ is excluded from core-only installs (#3269). Skip rather than crash.
+  if (!existsSync(join(ROOT, "web", "src"))) {
+    t.skip("web/ not present");
+    return;
+  }
+  const { trackerTsvLine: webLine } = await import("../web/src/lib/report-persist.mjs");
+  const rows = [
+    ROW,
+    { ...ROW, via: "Hays", url: "https://example.com/jobs/2" },
+    { ...ROW, via: null, url: "" },
+    { ...ROW, via: "Hays", url: "" },
+  ];
+  for (const row of rows) {
+    assert.equal(coreLine(row), webLine(row));
+  }
+});
+
 test("the script writes the report and the headed addition", () => {
   const root = mkdtempSync(join(tmpdir(), "co-persist-report-"));
   try {
@@ -74,7 +93,7 @@ test("the script writes the report and the headed addition", () => {
       input: JSON.stringify(body),
       encoding: "utf8",
     });
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, describeSpawn(result));
     assert.deepEqual(JSON.parse(result.stdout), { ok: true });
     assert.equal(readFileSync(join(root, "reports", ROW.reportFile), "utf8"), body.markdown);
     assert.equal(readFileSync(join(root, "batch", "tracker-additions", "035-globex.tsv"), "utf8"), coreLine(ROW));
@@ -91,7 +110,7 @@ test("a bad reportFile writes nothing", () => {
       input: JSON.stringify(payload({ reportFile: "../secret.md" })),
       encoding: "utf8",
     });
-    assert.notEqual(result.status, 0);
+    assert.ok(exitedNonZero(result), describeSpawn(result, 'expected a non-zero exit'));
     assert.match(result.stderr, /refusing to write report/);
     assert.equal(existsSync(join(root, "reports")), false);
     assert.equal(existsSync(join(root, "batch")), false);
@@ -108,7 +127,7 @@ test("stdin that is not JSON exits non-zero", () => {
       input: "not-json",
       encoding: "utf8",
     });
-    assert.notEqual(result.status, 0);
+    assert.ok(exitedNonZero(result), describeSpawn(result, 'expected a non-zero exit'));
     assert.match(result.stderr, /JSON/);
     assert.equal(existsSync(join(root, "reports")), false);
   } finally {

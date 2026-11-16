@@ -20,6 +20,10 @@ elapsed-time cadence case — see `confirmed_time_noshow` in `modes/email.md`
 - `config/profile.yml` — User profile (name, identity)
 - `cv.md` — CV for proof points in drafts
 
+## Step 0: Check that follow-ups are on
+
+If `config/profile.yml` sets `follow_ups.enabled: false`, stop here. Tell the user follow-ups are turned off and that they can turn them back on with `follow_ups.enabled: true` in `config/profile.yml` or the "Track follow-ups" checkbox on the web Config page. Do not run the cadence script or draft follow-up messages. The `contacto` mode is a first outreach, not a follow-up, so it still works when follow-ups are off. `followup-cadence.mjs --json` also reports `"followupsEnabled": false` with no entries in that case.
+
 ## Step 1 — Run Cadence Script
 
 Execute:
@@ -34,11 +38,12 @@ Parse the JSON output. It contains:
 |-----|----------|
 | `metadata` | Analysis date, total tracked, actionable count, overdue/urgent/cold/waiting counts |
 | `entries` | Per-application: company, role, status, days since application, follow-up count, urgency, next follow-up date, extracted contacts, report path |
-| `cadenceConfig` | Follow-up scope (`off`, `interviews`, or `all`) and timing rules |
+| `cadenceConfig` | Cadence rules (applied: 7 days, responded/assessment: 3 days, interview: 1 day) |
 
-Only use `entries` returned by the cadence script for reminders and drafts. Scope applies before pinned dates: `off` means no reminders; `interviews` includes only applications whose normalized status is Interview. Existing follow-up history stays intact. If scope is `off`, say reminders are turned off and stop this mode. If scope is `interviews` and no entries remain, say no interviews currently need a follow-up and stop. Otherwise, if no entries remain, say no active applications currently need a follow-up and stop.
+If no actionable entries, tell the user:
+> "No active applications to follow up on. Apply to some roles first with `/career-ops` and come back when they're aging."
 
-**Calibration cross-reference:** `node funnel-velocity.mjs --summary` reports which in-flight applications sit beyond the typical first-response window (its `waiting` block). Use those rows only as context when they also appear in the scoped cadence `entries`; they cannot add reminders outside the selected scope. Silence past the window is common, not a rejection. When the user reports a status change here ("they replied", "rejected"), route it through `node set-status.mjs --report <report#> <state>` and pass `--on YYYY-MM-DD` when they name the real event day.
+**Calibration cross-reference:** `node funnel-velocity.mjs --summary` reports which in-flight applications sit beyond the typical first-response window (its `waiting` block) — those rows are natural follow-up candidates; feed them into this cadence view rather than treating the wait itself as a verdict (silence past the window is common, not a rejection). When the user reports a status change here ("they replied", "rejected"), route it through `node set-status.mjs --report <report#> <state>` and pass `--on YYYY-MM-DD` when they name the real event day.
 
 ## Step 1b — Employer Response-Latency Check
 
@@ -76,6 +81,8 @@ Use visual indicators:
 - **OVERDUE** — follow-up is past due
 - **waiting (X days)** — on track, follow-up scheduled
 - **COLD** — 2+ follow-ups sent, suggest closing
+
+`Assessment` is a lifecycle stage distinct from `Interview`. It uses the responded cadence: the first check-in is due after 1 day, then every 3 days while no newer follow-up is logged. Use the assessment log (`data/assessments.tsv`) for platform, subject, score, and completion details.
 
 ## Step 3 — Generate Follow-up Drafts
 
@@ -189,7 +196,7 @@ After the user reviews and says they've sent a follow-up, record it:
    - `contact` = who it was sent to
    - `notes` = brief note (e.g., "First follow-up, referenced Barbeiro.app")
 
-3. Optionally append "Follow-up {N} sent {YYYY-MM-DD}" using `node set-status.mjs --row <appNum> <current-state> --note "Follow-up {N} sent {YYYY-MM-DD}"`, preserving the application's current state.
+3. Optionally add "Follow-up {N} sent {YYYY-MM-DD}" to the row's notes with `node set-status.mjs --report {report#} {current status} --note "Follow-up {N} sent {YYYY-MM-DD}"`. Passing the row's current status leaves it unchanged and appends the note; do not edit `data/applications.md` by hand
 
 **IMPORTANT:** Only record follow-ups the user confirms they actually sent. Never record a draft as sent.
 
@@ -233,6 +240,7 @@ After showing all drafts, summarize:
 |--------|----------------|------------|-------------|
 | Applied | 7 days after application | Every 7 days | 2 (then mark cold) |
 | Responded | 1 day (urgent reply) | Every 3 days | No limit |
+| Assessment | 1 day (assessment invite/submission) | Every 3 days | No limit |
 | Interview | 1 day after (thank-you) | Every 3 days | No limit |
 
 These defaults can be overridden via `node followup-cadence.mjs --applied-days N`.

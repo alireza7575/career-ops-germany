@@ -81,7 +81,7 @@ try {
   // (asserted above).
   const mixedUrl = normalizeUrlForDedup('https://jobs.example.com/j?gh_jid=9&rltr=abc&utm_source=feed');
   const boardUrl = normalizeUrlForDedup('https://boards.greenhouse.io/acme/jobs/9');
-  if (mixedUrl.includes('gh_jid=9') && boardUrl.includes('gh_jid') === false && boardUrl.includes('boards.greenhouse.io')) {
+  if (new URL(mixedUrl).searchParams.get('gh_jid') === '9' && !new URL(boardUrl).searchParams.has('gh_jid') && new URL(boardUrl).hostname === 'boards.greenhouse.io') {
     pass('normalizeUrlForDedup stays a URL and keeps gh_jid');
   } else fail(`URL shape = ${JSON.stringify({ mixedUrl, boardUrl })}`);
   const mixed = seenJobKey('https://jobs.example.com/j?gh_jid=9&rltr=abc&utm_source=feed');

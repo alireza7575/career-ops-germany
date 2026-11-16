@@ -1,6 +1,6 @@
 {
   "name": "career-ops",
-  "version": "1.37.1",
+  "version": "1.40.0",
   "description": "Open-source AI job search that runs locally in your AI coding CLI: scan job portals, evaluate listings into a structured A-H report with a 1-5 score, tailor your CV, track applications",
   "private": true,
   "engines": {
@@ -8,6 +8,7 @@
   },
   "scripts": {
     "doctor": "node doctor.mjs",
+    "ui": "node scripts/ui-server.mjs",
     "or": "node openrouter-runner.mjs",
     "or:scan": "node openrouter-runner.mjs scan",
     "or:pipeline": "node openrouter-runner.mjs pipeline",
@@ -42,6 +43,7 @@
     "scan:yc": "node scan-ats-full.mjs --seeds yc",
     "scan:interamt": "node scan-interamt.mjs",
     "scan:dayforce": "node scan-dayforce.mjs",
+    "scan:seek": "node scan-seek.mjs",
     "company:funded": "node company-funded.mjs",
     "validate:portals": "node validate-portals.mjs",
     "verify:portals": "node verify-portals.mjs",
@@ -54,12 +56,21 @@
     "career-profile": "node career-profile.mjs",
     "add": "node add-entry.mjs",
     "reposts": "node detect-reposts.mjs",
+    "filter-audit": "node filter-audit.mjs --summary",
     "digest": "node weekly-digest.mjs",
     "freshness": "node check-table-freshness.mjs",
     "jd-archive": "node check-jd-archive.mjs",
     "rejection-latency": "node rejection-latency.mjs",
+    "role-clarity": "node role-clarity.mjs",
+    "closing-soon": "node closing-soon.mjs",
+    "close-stale": "node close-stale.mjs",
+    "import-tracker": "node import-tracker.mjs",
+    "reeval-candidates": "node reeval-candidates.mjs",
     "invite-match": "node invite-match.mjs",
+    "ics-interview": "node ics-interview.mjs",
+    "panelist-roles": "node panelist-roles.mjs",
     "paste-reply": "node paste-reply.mjs",
+    "privacy:status": "node privacy-status.mjs",
     "gemini:eval": "node gemini-eval.mjs",
     "ollama:eval": "node ollama-eval.mjs",
     "openai:eval": "node openai-eval.mjs",
@@ -71,7 +82,7 @@
     "application:init": "node application-artifacts.mjs --init",
     "build:dashboard": "node build-dashboard.mjs",
     "serve:dashboard": "cd dashboard && go run .",
-    "postinstall": "node -e \"process.exit(['','0','false'].includes((process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD||'').toLowerCase())?1:0)\" || npx playwright install chromium || npx playwright install chromium",
+    "postinstall": "node -e \"process.exit(['','0','false'].includes((process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD||'').toLowerCase())?1:0)\" || npx playwright install chromium || npx playwright install chromium || node -e \"console.warn('\\ncareer-ops: could not install Playwright Chromium. Everything else is installed; PDF generation and browser checks need it. Run: npx playwright install chromium')\"",
     "manifesto": "node manifesto.mjs"
   },
   "keywords": [
@@ -102,7 +113,7 @@
     "@google/generative-ai": "^0.24.1",
     "dotenv": "^18.0.4",
     "js-yaml": "^5.3.0",
-    "playwright": "1.64.0",
-    "undici": "^6.28.1"
+    "playwright": "1.64.1",
+    "undici": "^7.30.1"
   }
 }
