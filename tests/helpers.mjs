@@ -427,6 +427,8 @@ const SCOOP_ROOTS = [
 ].filter(Boolean);
 
 const WINDOWS_BASH_CANDIDATES = [
+  'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+  'C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe',
   'C:\\Program Files\\Git\\bin\\bash.exe',
   'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
   ...SCOOP_ROOTS.flatMap((root) => [
@@ -440,6 +442,7 @@ const WINDOWS_BASH_CANDIDATES = [
 // /c/... while WSL bash expects /mnt/c/..., so the path silently fails to
 // resolve inside the shell that receives it.
 const WINDOWS_CYGPATH_CANDIDATES = [
+  'C:\\Program Files (x86)\\Git\\usr\\bin\\cygpath.exe',
   'C:\\Program Files\\Git\\usr\\bin\\cygpath.exe',
   ...SCOOP_ROOTS.map((root) => join(root, 'apps', 'git', 'current', 'usr', 'bin', 'cygpath.exe')),
 ];
@@ -489,11 +492,8 @@ export function run(cmd, args = [], opts = {}) {
   // formatRunFailure() attribute an unrelated child's stderr to whatever failed
   // most recently. A stale diagnostic is worse than none.
   //
-  // Clearing here rather than on the success path also keeps the execFileSync
-  // call below byte-identical: editing that line makes CodeQL re-attribute its
-  // long-standing "uncontrolled command line" finding to whichever PR touched
-  // it. Nothing about what reaches the child changes either way, since the
-  // executable is still allowlisted and the arguments are still an argv vector.
+  // Clear before resolving: an allowlist rejection must not leave the previous
+  // child's diagnostics available to a later formatRunFailure() call.
   lastFailure = null;
   const exe = resolveAllowedExecutable(cmd);
   const env = opts.env ?? process.env;
@@ -502,7 +502,7 @@ export function run(cmd, args = [], opts = {}) {
     : opts;
   opts = isolatedOpts;
   try {
-    return execFileSync(exe, args, { cwd: ROOT, encoding: 'utf-8', timeout: 30000, ...opts }).trim();
+    return execFileSync(exe, args, { cwd: ROOT, encoding: 'utf-8', timeout: 30000, ...opts, shell: false }).trim();
   } catch (e) {
     // execFileSync attaches the child's streams and exit status to the error.
     // Keep them: callers report failure as `<name> crashed`, and without this a

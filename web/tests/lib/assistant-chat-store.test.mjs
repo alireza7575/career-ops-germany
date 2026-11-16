@@ -66,21 +66,14 @@ test('an in-progress writer is reported rather than bypassed', t => {
 test('lock and temp cleanup errors do not replace a saved conversation', t => {
   const root = fixture(t), lockId = randomUUID(), tempId = randomUUID();
   const lockPath = join(root, '.career-ops-web', 'chats', `${lockId}.json.lock`);
-  const originalOpenSync = fs.openSync, originalCloseSync = fs.closeSync, originalUnlinkSync = fs.unlinkSync, originalConsoleError = console.error;
+  const originalRmSync = fs.rmSync, originalUnlinkSync = fs.unlinkSync, originalConsoleError = console.error;
   const logged = [];
-  let lockFd;
-  fs.openSync = (path, ...args) => {
-    const fd = originalOpenSync(path, ...args);
-    if (String(path) === lockPath) lockFd = fd;
-    return fd;
-  };
-  fs.closeSync = fd => {
-    originalCloseSync(fd);
-    if (fd === lockFd) throw new Error('simulated close failure');
+  fs.rmSync = (path, ...args) => {
+    if (String(path) === lockPath) throw Object.assign(new Error('simulated lock release failure'), { code: 'EIO' });
+    return originalRmSync(path, ...args);
   };
   fs.unlinkSync = path => {
     const target = String(path);
-    if (target === lockPath) throw Object.assign(new Error('simulated lock unlink failure'), { code: 'EACCES' });
     if (target.endsWith('.tmp')) throw Object.assign(new Error('simulated temp unlink failure'), { code: 'EACCES' });
     return originalUnlinkSync(path);
   };
@@ -91,14 +84,12 @@ test('lock and temp cleanup errors do not replace a saved conversation', t => {
     assert.equal(readChat(root, lockId).revision, 1);
     assert.equal(saveChat(root, tempId, { revision: 0, messages }).revision, 1);
     assert.equal(readChat(root, tempId).revision, 1);
-    assert.deepEqual(logged.map(([message]) => message), ['chat temp cleanup failed', 'chat lock release failed', 'chat temp cleanup failed']);
+    assert.deepEqual(logged.map(([message]) => message), ['chat temp cleanup failed', `Warning: lock cleanup failed at ${lockPath}: simulated lock release failure`, 'chat temp cleanup failed']);
   } finally {
-    fs.openSync = originalOpenSync;
-    fs.closeSync = originalCloseSync;
+    fs.rmSync = originalRmSync;
     fs.unlinkSync = originalUnlinkSync;
     console.error = originalConsoleError;
     syncBuiltinESMExports();
-    try { originalUnlinkSync(lockPath); } catch (err) { if (err.code !== 'ENOENT') throw err; }
   }
 });
 

@@ -139,6 +139,8 @@ export type Application = {
   status: string;
   pdf: string;
   report: string;
+  /** Posting URL from the tracker URL column, with markdown link syntax removed. */
+  url: string;
   /** Tracker's `Apply Link` column — usually a markdown link to the original ad; "" when the column is absent. */
   applyLink: string;
   /** Tracker's `Follow-up` column — a date or "—"; "" when the column is absent. */
@@ -287,14 +289,14 @@ export function doctorState(snapshot?: Pick<PipelineSummary, "applications" | "i
 } {
   const has = (rel: string) => {
     try {
-      return fs.existsSync(path.isAbsolute(rel) ? rel : path.join(careerOpsRoot(), rel));
+      return fs.existsSync(rel === "config/profile.yml" ? getProfilePath(careerOpsRoot()) : path.join(careerOpsRoot(), rel));
     } catch {
       return false;
     }
   };
   const prereqs: [string, string][] = [
     ["cv.md", "cv.md"],
-    [getProfilePath(careerOpsRoot()), "config/profile.yml"],
+    ["config/profile.yml", "config/profile.yml"],
     ["modes/_profile.md", "modes/_profile.md"],
     ["portals.yml", "portals.yml"],
   ];

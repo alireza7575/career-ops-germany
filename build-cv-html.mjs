@@ -75,6 +75,7 @@ const DEFAULT_SECTION_TITLES = {
   certifications: 'Certifications',
   awards: 'Awards & Honors',
   interests: 'Interests',
+  languages: 'Languages',
   skills: 'Skills',
 };
 
@@ -810,6 +811,8 @@ function renderReport(payload, partials) {
     AWARDS: buildAwards(payload.awards, partials.get('awards')),
     SECTION_INTERESTS: escapeHtml(sectionTitles.interests),
     INTERESTS: buildInterests(payload.interests),
+    SECTION_LANGUAGES: escapeHtml(sectionTitles.languages),
+    LANGUAGES: buildSkills(payload.languages),
     SECTION_SKILLS: escapeHtml(sectionTitles.skills),
     SKILLS: buildSkills(payload.skills, partials.get('skills')),
     CONSENT: escapeHtml((payload.consent || '').trim()),
@@ -945,7 +948,7 @@ function mdUrl(url) {
 const HTML_SECTION_SLOTS = {
   summary: 'SUMMARY_TEXT', competencies: 'COMPETENCIES', experience: 'EXPERIENCE',
   projects: 'PROJECTS', education: 'EDUCATION', certifications: 'CERTIFICATIONS',
-  awards: 'AWARDS', interests: 'INTERESTS', skills: 'SKILLS', consent: 'CONSENT',
+  awards: 'AWARDS', interests: 'INTERESTS', languages: 'LANGUAGES', skills: 'SKILLS', consent: 'CONSENT',
 };
 function markdownSectionSlots() {
   return {
@@ -1030,6 +1033,10 @@ function renderMarkdown(payload, template) {
     .map((item, idx) => (idx === 0 ? item : item.charAt(0).toLowerCase() + item.slice(1)))
     .join(', ');
   if (mdLine(interests)) section('interests', [mdLine(interests), '']);
+
+  const languages = list(payload.languages).filter(c => hasRequiredFields(c, 'languages', 'html')).map(c =>
+    `- ${mdLine(c.category) ? `**${mdLine(c.category)}:** ` : ''}${mdLine(joinItems(c.items))}`);
+  section('languages', languages.length ? [...languages, ''] : []);
 
   const skills = list(payload.skills).filter(c => hasRequiredFields(c, 'skills', 'html')).map(c =>
     `- ${mdLine(c.category) ? `**${mdLine(c.category)}:** ` : ''}${mdLine(joinItems(c.items))}`);

@@ -101,6 +101,178 @@ Optional [German screening rules](templates/custom.germany.example.md) belong in
 
 For Codex interactive and headless usage, see [docs/CODEX.md](docs/CODEX.md). You can also run `codex exec "Run career-ops scan mode"` from the code folder; ordinary-language prompts work without slash commands.
 
+The core features and command reference below come from upstream career-ops. Use the fork setup above for this repository.
+
+## Features
+
+| Feature                  | Description                                                                                                                              |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **A-H Evaluation**       | Role summary, CV match (with how much each requirement matters for this posting, and whether that weight came from the JD's own wording, its structure, or an estimate, labelled per requirement; an estimate can never be top-band), level strategy, comp research, personalization, interview prep (STAR+R) -- plus a Block G posting-legitimacy check (is it still open, is it a repost: observations, not verdicts), and a Work-Auth signal that flags an explicit no-sponsorship JD as a hard blocker |
+| **Human-in-the-Loop**    | AI evaluates and recommends, you decide and act. The system never submits an application -- you always have the final call <!-- hitl: absolute guarantee. Do not add "automatically", "by itself", "without your permission" or any other hedge when translating this row. -->               |
+| **ATS PDF Generation**   | ATS-readable CVs tailored to each JD from your own experience, in Space Grotesk + DM Sans design                                                                                 |
+| **Cover Letter Generator** | Research-backed cover letters with keyword mirroring, four interactive angle prompts (why/problems/approach/tone), draft-in-chat approval gate, and A4 PDF via the same HTML + Playwright pipeline as CVs. Auto-drafts on every evaluation; complete and generate on demand via `/career-ops cover` |
+| **Beyond the CV**        | Company research ([`deep`](modes/deep.md)) surfaces AI strategy, recent moves, engineering culture, and the angle your profile should take. Contact discovery ([`contacto`](modes/contacto.md)) identifies the hiring manager, recruiter, or team peer worth reaching out to and drafts a ≤300-character LinkedIn message tuned to each contact type. Formal application email drafts ([`email`](modes/email.md)) turn an evaluated report or pasted JD into a subject line, body, and attachment checklist without sending, submitting, or clicking anything. Applications get you in the queue; research gets you a conversation. |
+| **Pattern Analysis**     | Rejection patterns and per-ATS-channel advance rates (`analyze-patterns.mjs`), lifetime funnel stats (`stats.mjs`), repost detection, a possible sign of a ghost job (`detect-reposts.mjs`) |
+
+<details>
+<summary><b>Everything else it does</b></summary>
+
+| Feature                  | Description                                                                                                                              |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Auto-Pipeline**        | Paste a URL, get a full evaluation + PDF + tracker entry                                                                                 |
+| **Interview Story Bank** | Accumulates STAR+Reflection stories across evaluations -- 5-10 master stories you can adapt to the behavioral questions you get                        |
+| **Negotiation Scripts**  | Salary negotiation frameworks, geographic discount pushback, competing offer leverage                                                    |
+| **Application Email Drafts** | Formal recruiter/referral/cold application emails from a report or pasted JD, with subject line, attachment checklist, source-backed fit points, and a profile-driven contact block. Draft-only -- career-ops never sends, submits, or clicks anything. |
+| **Portal Scanner**       | 100+ companies pre-configured (Anthropic, OpenAI, ElevenLabs, Retool, n8n...) + custom web-search queries across Ashby, Greenhouse, Lever, Wellfound |
+| **Funded Company Discovery** | Review-first `npm run company:funded` script surfaces recently funded companies and source diagnostics from structured public feeds without editing your data |
+| **Batch Processing**     | Parallel evaluation with headless CLI workers (`claude -p` / `opencode run`)                                                             |
+| **Dashboard TUI**        | Terminal UI to browse, filter, and sort your pipeline                                                                                    |
+| **Pipeline Integrity**   | Automated merge, dedup, status normalization, health checks                                                                              |
+| **Interview Suite**      | Time-blocked prep plans, practice sessions with feedback, post-interview debriefs ([`interview/`](modes/interview/README.md)), and a company red-flag detector ([`interview-redflag`](modes/interview-redflag.md)) |
+| **Offer Stage**          | Contract reading companion -- clause walk plus a lawyer question list ([`offer-prep`](modes/offer-prep.md)) -- and a desired/advertised/actual salary-gap analyzer (`salary-gap.mjs`) |
+| **Follow-ups & Replies** | Follow-up cadence calculator and seeded reminders (`followup-cadence.mjs`, `followup-seed.mjs`); turn them off with `follow_ups.enabled: false` in `config/profile.yml`; employer reply classification into tracker updates ([`reply-watch`](modes/reply-watch.md)) |
+| **Plugin System**        | Opt-in integrations (Gmail, Notion, Apify + a community registry), disabled by default -- see [docs/PLUGINS.md](docs/PLUGINS.md)        |
+| **LinkedIn job alerts**  | Paste a LinkedIn alert email on the dashboard or with `node linkedin-import.mjs`. No Google account. See [docs/LINKEDIN_JOBS.md](docs/LINKEDIN_JOBS.md) |
+
+</details>
+
+## How It Works
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/how-it-works-dark.svg"><img src="docs/how-it-works-light.svg" alt="How it works: you paste a job URL or description. Archetype Detection classifies it as LLMOps, Agentic, PM, SA, FDE or Transformation. The A-H Evaluation reads cv.md and covers match, gaps, comp research, STAR stories and legitimacy. It produces a report (reports/*.md), the tailored CV in the format set by cv.output_format — a PDF by default — and a tracker entry (data/applications.md)." width="760"></picture></p>
+
+## Usage
+
+Paste a job URL or description into your AI CLI. career-ops checks that a linked posting is still live (pasted text has no link to check), scores it against your CV, writes a report, tailors your CV (a PDF by default) and adds a row to your tracker. That covers most days. Everything else is a mode you ask for by name. If a posting can't be read, the pipeline stops and asks you to paste the text or share a screenshot.
+
+### Asking for a mode
+
+| CLI | How you ask for `scan` |
+| --- | --- |
+| Claude Code, OpenCode, Antigravity CLI (`agy`), Grok Build CLI | `/career-ops scan` |
+| Pi | `/skill:career-ops scan` |
+| Codex, Qwen, Cursor, or any other supported CLI | Plain language: "Run the career-ops scan mode" |
+
+`/career-ops` with nothing after it shows the command menu in the CLIs that use it. Plain language works in every supported CLI. As a Claude Code plugin, the command is `/career-ops:career-ops`.
+
+All of them share one router, `.agents/skills/career-ops/SKILL.md`, and the same `modes/*.md` files, so every CLI routes a request the same way (browser-heavy modes also need Playwright tools). Slash commands are not guaranteed in Codex: ask in plain language, or run one prompt headless with `codex exec "Evaluate this JD with career-ops auto-pipeline: https://company.com/jobs/123"` ([docs/CODEX.md](docs/CODEX.md)). How to run it in each supported CLI, headless commands where a CLI has one, and per-CLI setup notes are in [docs/SUPPORTED_CLIS.md](docs/SUPPORTED_CLIS.md).
+
+### The everyday commands
+
+| Command | What it does |
+| --- | --- |
+| *paste a URL or JD* | Full pipeline: liveness check (URLs only), A-G evaluation plus H at high scores, report, tailored CV (PDF by default), tracker row |
+| `scan` | Scan your portals for new postings and add them to the inbox (`data/pipeline.md`) |
+| `pipeline` | Work through the URLs waiting in the inbox (the standard and premium tiers may skip obvious mismatches) |
+| `apply` | Fill an application form with you, field by field. It stops before Submit |
+| `tracker` | Where every application stands |
+| `followup` | Which applications are due a follow-up, with drafts |
+
+<details>
+<summary><b>All commands, by stage of the search</b></summary>
+
+`oferta`, `ofertas` and `contacto` keep their original Spanish names: offer, offers, contact.
+
+**Find roles**
+
+| Command | What it does |
+| --- | --- |
+| [`scan`](modes/scan.md) | Scan portals and discover new offers |
+| [`discover`](modes/discover.md) | Resolve a list of company names to scannable ATS boards. Previews by default; adds them to `portals.yml` only with `--write` (zero-token) |
+| [`pipeline`](modes/pipeline.md) | Process pending URLs from the inbox (`data/pipeline.md`) |
+| [`triage`](modes/triage.md) | Fast first-pass go/no-go score from `modes/_brief.md`, before a full evaluation (writes no files) |
+| [`batch`](modes/batch.md) | Evaluate many postings with headless workers (parallel with Claude, one at a time with other CLIs) |
+| [`titles`](modes/titles.md) | Suggest adjacent job titles from your CV to broaden the search |
+
+**Evaluate a role**
+
+| Command | What it does |
+| --- | --- |
+| *paste a URL or JD* | [Auto-pipeline](modes/auto-pipeline.md): evaluation + report + tailored CV (PDF by default) + tracker entry |
+| [`oferta`](modes/oferta.md) | Evaluation only, Blocks A to G plus H at high scores (no PDF) |
+| [`ofertas`](modes/ofertas.md) | Compare and rank several offers |
+| [`deep`](modes/deep.md) | Deep research prompt about the company |
+| [`eu-swe`](modes/regional/eu-swe.md) | Calibrate a European software-engineering application before CV, apply or interview |
+
+**Apply**
+
+| Command | What it does |
+| --- | --- |
+| [`pdf`](modes/pdf.md) | ATS-optimized CV as a PDF |
+| [`ats`](modes/ats.md) | ATS-friendliness check of a generated CV: score and fixable issues |
+| [`text`](modes/text.md) | Tailored CV as markdown (mirrors `cv.md`, no PDF) |
+| [`latex`](modes/latex.md) | Export the CV as LaTeX/Overleaf `.tex` |
+| [`latex-tex`](modes/latex-tex.md) | Tailor your own `resume.tex` in place (opt-in; `cv.md` stays the default) |
+| [`cover`](modes/cover.md) | Cover letter, from a pasted JD or an evaluated report (`cover {slug}`) |
+| [`email`](modes/email.md) | Formal application email draft. Draft-only: never sends, submits or clicks |
+| [`contacto`](modes/contacto.md) | Find the hiring manager, recruiter or a peer, and draft a LinkedIn message |
+| [`apply`](modes/apply.md) | Live application assistant (Playwright from this checkout). Does not submit |
+
+**Interview**
+
+| Command | What it does |
+| --- | --- |
+| [`interview-prep`](modes/interview-prep.md) | Company-specific interview prep document |
+| [`interview/plan`](modes/interview/plan.md) | Time-blocked prep plan for an upcoming interview |
+| [`interview/practice`](modes/interview/practice.md) | Practice interview, one question at a time, with feedback |
+| [`interview/debrief`](modes/interview/debrief.md) | Post-interview debrief: close gaps, predict the next round |
+| [`interview-redflag`](modes/interview-redflag.md) | Analyze an employer's warning signs before you join |
+
+**After you apply**
+
+| Command | What it does |
+| --- | --- |
+| [`tracker`](modes/tracker.md) | Application status overview |
+| [`followup`](modes/followup.md) | Follow-up cadence: flag overdue applications, generate drafts |
+| [`reply-watch`](modes/reply-watch.md) | Classify employer replies and suggest tracker updates |
+| [`outcome`](modes/outcome.md) | Record an application's outcome and archive its artifacts |
+| [`offer-prep`](modes/offer-prep.md) | Read a received offer or contract with you: clause walk and questions for a lawyer (not legal advice) |
+
+**Your profile and CV**
+
+| Command | What it does |
+| --- | --- |
+| [`interview`](modes/interview.md) | Profile setup: an interactive interview about your experience that builds your CV and profile (not interview practice) |
+| [`intake`](modes/intake.md) | Build or enrich your profile from files in `documents/` (master CV, LinkedIn export). Nothing is written without your confirmation |
+| [`master-profile`](modes/master-profile.md) | Import, review and validate your Master Career Profile, and prepare selected facts as CV bullets |
+| [`add`](modes/add.md) | Add a project, paper or role to your CV (fetch, preview, confirm) |
+| [`expand`](modes/expand.md) | Discover competencies missing from your CV, from your profile links |
+| [`retro`](modes/retro.md) | Review this session and keep what you taught it as rules (writes only the ones you accept) |
+
+**Improve your targeting**
+
+| Command | What it does |
+| --- | --- |
+| [`patterns`](modes/patterns.md) | Analyze rejection patterns and improve targeting |
+| [`calibrate`](modes/calibrate.md) | Check whether your evaluation scores predict your real outcomes. Advisory: never changes scoring |
+| [`upskill`](modes/upskill.md) | Skill-gap analysis across your evaluated reports |
+| [`training`](modes/training.md) | Evaluate a course or certification against your North Star |
+| [`project`](modes/project.md) | Evaluate a portfolio project idea |
+
+**System**
+
+| Command | What it does |
+| --- | --- |
+| [`agent-inbox`](modes/agent-inbox.md) | Queue requests for the next session, and work through them then (`data/agent-inbox.md`). `inbox` works too |
+| [`update`](modes/update.md) | Update career-ops system files, with a diff preview and compatibility check |
+
+</details>
+
+## Project Structure
+
+```
+career-workspace/
+├── career-ops-germany/          # Public code checkout
+│   ├── AGENTS.md                # Agent instructions
+│   ├── .career-ops-data         # Local path to the private data folder (gitignored)
+│   ├── modes/
+│   │   ├── _shared.md           # Shared context (system file; local edit kept unless apply --force)
+│   │   └── _profile.md          # Your archetypes and framing (customize this in the data folder)
+│   ├── templates/               # Starter configuration and CV templates
+│   ├── providers/               # Job board integrations
+│   └── web/                     # Optional local web app
+└── career-ops-data/             # Your private repository: CV, profile, portals, tracker, reports
+```
+
 ## Daily use
 
 Run your agent from the code folder. It reads and writes career files in the configured data folder.
@@ -155,6 +327,12 @@ More help: [German-market guide](docs/GERMAN_MARKET.md) · [Private data trouble
 ## You don't have to search alone
 
 Find the original project's community and contribution guide in [upstream Career-Ops](https://github.com/career-ops-hq/career-ops).
+
+<p align="center">
+  <a href="https://github.com/career-ops-hq/career-ops/blob/main/HIRED.md"><img src="docs/hired-badge.svg" alt="Upstream hired stories"></a>
+  <a href="https://discord.gg/8pRpHETxa4"><img src="docs/discord-badge.svg" alt="Upstream community"></a>
+  <a href="https://github.com/career-ops-hq/career-ops/releases/latest"><img src="docs/npm-badge.svg" alt="Latest upstream release"></a>
+</p>
 
 ## Sponsors
 

@@ -267,7 +267,7 @@ const readOrNull = (path) => {
 
 {
   const { dir } = seedRepo('co-deps-rollback-ok-');
-  const stubDir = join(dir, '.git', 'co-stubs');
+  const stubDir = mkdtempSync(join(tmpdir(), 'co-deps-stubs-'));
   try {
     const { saw, skip, npxRan } = writeStubs(stubDir, { npmFails: false });
     const result = runRollback(dir, stubDir);
@@ -287,13 +287,14 @@ const readOrNull = (path) => {
       `skip env ${JSON.stringify(readOrNull(skip))}, npx ran: ${existsSync(npxRan)}`,
     );
   } finally {
+    rmSync(stubDir, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
 {
   const { dir, g } = seedRepo('co-deps-rollback-fail-');
-  const stubDir = join(dir, '.git', 'co-stubs');
+  const stubDir = mkdtempSync(join(tmpdir(), 'co-deps-stubs-'));
   try {
     writeStubs(stubDir, { npmFails: true });
     const result = runRollback(dir, stubDir);
@@ -313,6 +314,7 @@ const readOrNull = (path) => {
       `package.json ${JSON.stringify(readOrNull(join(dir, 'package.json')))}, HEAD ${g('log', '-1', '--format=%s')}`,
     );
   } finally {
+    rmSync(stubDir, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
   }
 }

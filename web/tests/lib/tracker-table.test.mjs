@@ -57,6 +57,7 @@ test('parses header columns when the data root does not contain system files', (
       pdf: '✅',
       report: '[001](../reports/001-example.md)',
       notes: 'fixture',
+      url: '',
       applyLink: '',
       followUp: '',
     },
@@ -87,6 +88,7 @@ for (const [market, date, company, role] of markets) {
     assert.deepEqual(parseApplications(md, root), [{
       n: '41', date: '2026-01-02', company: 'Acme', via: 'Example Agency', role: 'Engineer', location: 'Berlin',
       score: '4.2/5', status: 'Applied', pdf: '✅', report: '[41](reports/041.md)', notes: 'keep this note',
+      url: '',
       applyLink: '', followUp: '',
     }]);
   });
@@ -97,6 +99,7 @@ test('headerless tracker keeps data whose cells contain localized header words',
   assert.deepEqual(parseApplications(md, root), [{
     n: '41', date: '2026-01-02', company: 'Firma', via: '', role: 'Rolle', location: '', score: '4.2/5',
     status: 'Applied', pdf: '✅', report: '[41](reports/041.md)', notes: 'Status',
+    url: '',
     applyLink: '', followUp: '',
   }]);
 });

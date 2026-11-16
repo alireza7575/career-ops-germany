@@ -15,6 +15,7 @@ import { nextScheduledRun } from "../src/lib/scheduled-cadence.mjs";
 import { isMainModule } from "../../lib/is-main-module.mjs";
 import { scheduledRunnerResourcePath, scheduledStorePath } from "../src/lib/scheduled-runner-path.mjs";
 import { getCareerOpsRoot } from "../../path-resolver.mjs";
+import { pollLinkedInInbox } from "../../lib/linkedin-auto.mjs";
 
 const CODE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 export const MAX_RUNS = 100;
@@ -292,6 +293,9 @@ async function main() {
   return withResourceLock(
     runnerResource,
     async () => {
+      if (!manualJobId) {
+        await pollLinkedInInbox(root, { log: console.log });
+      }
       let claim;
       if (manualJobId) {
         if (!isSafeScheduledId(manualJobId)) throw new Error("Invalid scheduled job identifier.");

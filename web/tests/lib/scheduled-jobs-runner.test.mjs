@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import * as yaml from "js-yaml";
 
 import {
@@ -221,18 +222,20 @@ test("lock creation cleans directories when owner metadata writes fail", async (
   const originalWrite = fs.writeFileSync;
   try {
     fs.writeFileSync = (file, ...args) => {
-      if (String(file).endsWith(`${path.sep}owner.json`) && !String(file).includes(`${path.sep}resource.recovery.lock${path.sep}`)) {
+      if (String(file) === path.join(`${resource}.lock`, "owner.json")) {
         const error = new Error("injected owner write failure");
         error.code = "EIO";
         throw error;
       }
       return originalWrite(file, ...args);
     };
+    syncBuiltinESMExports();
     await assert.rejects(withResourceLock(resource, async () => {}), /injected owner write failure/);
     assert.equal(fs.existsSync(`${resource}.lock`), false);
-    assert.equal(fs.existsSync(`${resource}.recovery.lock`), false);
+    assert.equal(fs.existsSync(`${resource}.lock.recover`), false);
   } finally {
     fs.writeFileSync = originalWrite;
+    syncBuiltinESMExports();
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });

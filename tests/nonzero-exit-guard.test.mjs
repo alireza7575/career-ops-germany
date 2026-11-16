@@ -50,8 +50,6 @@ const KNOWN_NOT_A_SPAWN_RESULT = new Map([
     'demonstrates the old form on purpose, to prove it accepts a killed child'],
   ['web/tests/lib/server-launcher.test.mjs',
     'asserts a SIGTERM-terminated child "must not look successful" — termination IS the point there'],
-  ['web/tests/lib/scan-schedule-scripts.test.mjs',
-    'web/ keeps to its own test tree and does not import tests/helpers; needs its own copy or a shared move first'],
 ]);
 
 // Where a `/` can only begin a regex literal, never division. The usual

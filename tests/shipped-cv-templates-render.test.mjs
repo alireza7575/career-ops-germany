@@ -67,3 +67,26 @@ for (const template of templates) {
     assert.match(html, /Berlin, Germany/);
   });
 }
+
+test('timeline renders language levels in HTML and Markdown', () => {
+  const timeline = templates.find((template) => template.name === 'timeline');
+  assert.ok(timeline);
+  const payload = JSON.parse(readFileSync(input, 'utf8'));
+  payload.languages = [
+    { category: 'English', items: 'C1' },
+    { category: 'German', items: 'B2' },
+    { category: 'French', items: 'A2' },
+  ];
+  const languageInput = join(dir, 'language-payload.json');
+  const htmlOutput = join(dir, 'timeline-languages.html');
+  const markdownOutput = join(dir, 'timeline-languages.md');
+  writeFileSync(languageInput, JSON.stringify(payload));
+  execFileSync(process.execPath, ['build-cv-html.mjs', languageInput, htmlOutput, timeline.path], { cwd: ROOT });
+  execFileSync(process.execPath, ['build-cv-html.mjs', languageInput, '--markdown', markdownOutput, timeline.path], { cwd: ROOT });
+  const html = readFileSync(htmlOutput, 'utf8');
+  const markdown = readFileSync(markdownOutput, 'utf8');
+  assert.match(html, /<div class="languages-grid"><div class="skills-grid">/);
+  assert.equal((html.match(/class="skill-item"/g) || []).length, 4); // Three languages plus the Skills section.
+  assert.match(html, /English:<\/span> C1/);
+  assert.match(markdown, /## Languages\n\n- \*\*English:\*\* C1\n- \*\*German:\*\* B2\n- \*\*French:\*\* A2/);
+});
