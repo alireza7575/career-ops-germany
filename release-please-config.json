@@ -102,6 +102,30 @@
         {
           "type": "generic",
           "path": ".agents/skills/career-ops/SKILL.md"
+        },
+        {
+          "type": "generic",
+          "path": ".claude/skills/career-ops/SKILL.md"
+        },
+        {
+          "type": "generic",
+          "path": ".opencode/skills/career-ops/SKILL.md"
+        },
+        {
+          "type": "generic",
+          "path": ".qwen/skills/career-ops/SKILL.md"
+        },
+        {
+          "type": "generic",
+          "path": ".antigravitycli/skills/career-ops/SKILL.md"
+        },
+        {
+          "type": "generic",
+          "path": ".grok/skills/career-ops/SKILL.md"
+        },
+        {
+          "type": "generic",
+          "path": ".kimi/skills/career-ops/SKILL.md"
         }
       ]
     },
