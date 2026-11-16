@@ -17,11 +17,29 @@ By the end, you should have this project's code, a separate private career-data 
 
 ## 1. Get an assistant that can work with local files
 
-This walkthrough uses **Codex** as one option. Other supported assistants are listed in [SUPPORTED_CLIS.md](SUPPORTED_CLIS.md).
+Choose **Codex or Claude Code**. You only need one. Both can follow the setup prompts below; other supported assistants are listed in [SUPPORTED_CLIS.md](SUPPORTED_CLIS.md).
 
-Follow the [official desktop quickstart](https://learn.chatgpt.com/docs/quickstart) to install the app for your operating system, sign in, and select Codex. Use its current instructions for account access and installation; these can change. In the desktop app, choose a local project folder for this work. A regular browser chat without access to your local folder can explain commands, but cannot perform this local setup for you.
+### Option A: Codex
 
-Create an empty parent folder, such as `career-workspace`, using your computer's file manager. Open that folder as the assistant's project, then start a chat there. The folder will hold the code and private data side by side.
+1. Follow the [official desktop quickstart](https://learn.chatgpt.com/docs/quickstart) to install the app for your operating system and sign in.
+2. Select **Codex** and choose a local project folder for this work.
+3. Start a chat associated with that folder. Paste the setup message from step 2 below into its chat box.
+
+For the terminal alternative, see [this project's Codex guide](CODEX.md). In a terminal opened in your working folder, `codex` starts the interactive assistant.
+
+### Option B: Claude Code
+
+1. Follow the [official Claude desktop quickstart](https://code.claude.com/docs/en/desktop-quickstart) to install the app and sign in. Check its current account requirements.
+2. Open the **Code** tab. Choose a **Local** environment and your working folder.
+3. Start a session there. Paste the same setup message from step 2 below into its prompt box.
+
+Use Claude **Code**, rather than a regular Claude chat, for this local setup. If you prefer a terminal, follow [Claude Code's CLI quickstart](https://code.claude.com/docs/en/quickstart), then run `claude` in your working folder. The desktop Code tab and terminal CLI have separate installation steps; you do not need the CLI just to start a desktop session.
+
+### Choose the folder for either assistant
+
+Create an empty parent folder, such as `career-workspace`, using your computer's file manager, and select it for your local session. It will hold the code and private data side by side. Follow the official instructions for current installation and account requirements; these can change.
+
+A regular browser chat without access to your local folder can explain commands, but cannot perform this local setup for you. You do not need to install the upstream Career-Ops plugin for this walkthrough: it uses a checkout of the German fork.
 
 If the app's labels differ, ask its help or follow the official guide for opening a local folder. You are ready when your chat is associated with the folder you chose.
 
@@ -98,6 +116,8 @@ for review and run doctor to check for missing or unpersonalized settings.
 You can paste your CV text. If you supply a document for intake, ask the assistant to propose source-backed facts for your review before adding them to your profile. Correct anything inaccurate; you can say “I don't know” rather than guessing a number.
 
 **Checkpoint:** The summary should describe you, not a sample candidate. The assistant should explain any remaining setup warnings before moving on. Choose German-market rules with English or German writing; you do not have to write prompts in German.
+
+Ask it to run the setup check for the assistant you chose: `node doctor.mjs --json --cli codex` for Codex, or `node doctor.mjs --json --cli claude` for Claude Code. The assistant can run this command and explain its output; you do not need to type it into the chat as a standalone command.
 
 ## 5. Try one job before a large search
 

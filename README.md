@@ -10,7 +10,7 @@ This community fork builds on [career-ops](https://github.com/career-ops-hq/care
 
 You do not need to write code. An **AI coding assistant** is an app you can talk to in ordinary language that can also work with files on your computer. Career-Ops supplies the job-search instructions and tools; the assistant helps you set them up and use them.
 
-Follow the [beginner walkthrough: let AI help you set up](docs/BEGINNER_SETUP.md). It explains how to install an assistant, choose a working folder, and paste your first message. Use the prompts in its chat box; commands such as `git clone` belong in a terminal, which the assistant can help you use.
+Choose **Codex or Claude Code**, then follow the [beginner walkthrough: let AI help you set up](docs/BEGINNER_SETUP.md). It has separate getting-started instructions for both assistants, followed by shared setup prompts. Use the prompts in its chat box; commands such as `git clone` belong in a terminal, which the assistant can help you use.
 
 Your first message can be:
 
