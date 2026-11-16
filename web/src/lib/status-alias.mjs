@@ -58,6 +58,7 @@ export const STATUS_ALIAS = {
   reddedildi: "REJECTED",
   // Discarded — states.yml `discarded`
   descartado: "DISCARDED",
+  lapsed: "DISCARDED",
   descartada: "DISCARDED",
   cerrada: "DISCARDED",
   cancelada: "DISCARDED",

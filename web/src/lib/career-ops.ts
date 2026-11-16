@@ -525,7 +525,7 @@ const MODES_DIR_RE = /^modes(?:\/[A-Za-z0-9_-]+)?$/;
  * Verified against every market directory in the repo: each contains exactly
  * one file whose title line matches, and no apply-mode collides.
  */
-const EVAL_MODE_TITLE_RE = /A[-\u2010-\u2015][FG]/;
+const EVAL_MODE_TITLE_RE = /A[-\u2010-\u2015][FGH]/;
 
 const DEFAULT_EVAL_MODE = "modes/oferta.md";
 
