@@ -239,6 +239,9 @@ function tagEnd(html, start) {
       quote = c;
     } else if (c === '>') {
       return i + 1;
+    } else if (c === '<') {
+      // A new unquoted opener makes this tag malformed; don't rescan its tail.
+      return -1;
     }
   }
   return -1;

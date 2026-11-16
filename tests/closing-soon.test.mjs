@@ -323,6 +323,11 @@ test('captures: pathological unterminated markup is still read around', () => {
   }
 });
 
+test('htmlToText: malformed openers preserve later text and quoted angle brackets', () => {
+  assert.equal(htmlToText('<a <b>deadline Oct 21</b>'), '<a  deadline Oct 21 ');
+  assert.equal(htmlToText('<a title="a < b > c">deadline Oct 21</a>'), ' deadline Oct 21 ');
+});
+
 test('htmlToText: hostile unterminated markup stays near-linear (in-process, generous bound)', () => {
   // The old tag regex needed ~17s for 200k of this; a linear scan needs well
   // under a second. 5s leaves ample headroom for a loaded CI runner while still
