@@ -1,10 +1,8 @@
 name: Release Please
 on:
-  push:
-    branches: [main]
   # Releases are published by a maintainer, from their own account. With
   # "skip-github-release": true in release-please-config.json, release-please
-  # keeps opening and updating the release PR, but no longer creates tags or
+  # prepares the release PR when manually requested, but does not create tags or
   # releases: once the PR is merged, the maintainer creates each tag on its
   # merge commit and publishes the release. Publishing a career-ops release is
   # what publishes the npm scaffolder below. A release published with a
@@ -14,15 +12,26 @@ on:
   # Manual re-publish: when a release was published but the npm publish failed,
   # dispatch this workflow from the release tag to publish the scaffolder at
   # that version without cutting a new release:
-  #   gh workflow run release.yml --ref career-ops-vX.Y.Z
+  #   gh workflow run release.yml --ref career-ops-vX.Y.Z -f action=publish-npm
+  # Release preparation is explicit: ordinary main pushes must not recreate
+  # release PRs or their generated release-notes branches in this fork.
   workflow_dispatch:
+    inputs:
+      action:
+        description: Release action (prepare from main; publish from a release tag)
+        type: choice
+        required: true
+        default: prepare-release
+        options:
+          - prepare-release
+          - publish-npm
 
 permissions:
   contents: read
 
 jobs:
   release-please:
-    if: ${{ github.event_name == 'push' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'prepare-release' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
       # release-please opens and updates its release PR with a GitHub App token,
@@ -48,10 +57,10 @@ jobs:
 
   publish-npm:
     # The npm scaffolder, once per career-ops release (a web-vX.Y.Z release
-    # publishes nothing), or on a manual dispatch. It stays in this file: the
+    # publishes nothing), or an explicit publish dispatch from its tag. It stays in this file: the
     # trusted publisher on npmjs.com is bound to the workflow filename
     # (release.yml). For a release, the checkout is the tagged commit.
-    if: ${{ (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'career-ops-v')) || github.event_name == 'workflow_dispatch' }}
+    if: ${{ (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'career-ops-v')) || (github.event_name == 'workflow_dispatch' && inputs.action == 'publish-npm' && startsWith(github.ref, 'refs/tags/career-ops-v')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -61,9 +70,8 @@ jobs:
       # A tag on the wrong commit would publish whatever version that commit
       # carries: stop unless the release and scaffolder/package.json agree.
       - name: Check the release tag matches the scaffolder version
-        if: ${{ github.event_name == 'release' }}
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || github.ref_name }}
         run: |
           ver=$(jq -r .version scaffolder/package.json)
           if [ "$TAG" != "career-ops-v${ver}" ]; then
