@@ -80,3 +80,13 @@ test('every SKILL.md entrypoint carries the same standalone branch', () => {
     assert.equal(standaloneBranch(readFileSync(entry, 'utf8')), expected, `${entry} differs from .agents/skills/career-ops/SKILL.md`);
   }
 });
+
+test('release version bumps include every skill entrypoint', () => {
+  const config = JSON.parse(readFileSync(join(ROOT, 'release-please-config.json'), 'utf8'));
+  const paths = config.packages['.']['extra-files']
+    .filter((entry) => entry.type === 'generic').map((entry) => entry.path);
+  for (const dir of ['.agents', '.antigravitycli', '.claude', '.grok', '.kimi', '.opencode', '.qwen']) {
+    const entry = `${dir}/skills/career-ops/SKILL.md`;
+    assert.ok(paths.includes(entry), `release version bump omits ${entry}`);
+  }
+});
