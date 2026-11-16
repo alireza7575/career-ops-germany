@@ -59,7 +59,7 @@ It tailors your CV and drafts your&nbsp;answers. <strong>You&nbsp;press&nbsp;Sub
   Now we build career-ops, so&nbsp;you&nbsp;can&nbsp;land&nbsp;yours.
 </p>
 
-<p align="center"><a href="#your-turn">Try it on one job&nbsp;↓</a> · <a href="https://santifer.io/career-ops-system">Read the full&nbsp;story&nbsp;→</a></p>
+<p align="center"><a href="#start-with-the-german-version">Set up the German version&nbsp;↓</a> · <a href="https://santifer.io/career-ops-system">Read the full&nbsp;story&nbsp;→</a></p>
 
 <br>
 
@@ -93,7 +93,59 @@ It tailors your CV and drafts your&nbsp;answers. <strong>You&nbsp;press&nbsp;Sub
   <a href="https://www.producthunt.com/products/santifer-io?utm_source=badge-featured&utm_medium=badge" rel="noopener noreferrer"><img src="docs/press/producthunt.svg" alt="Featured on Product Hunt" width="206" height="54"></a>
 </p>
 
-## Your turn
+## Start with the German version
+
+This repository is the German-market fork. It includes German software-search presets, Bundesagentur and Arbeitnow discovery, German-market evaluation modes, and Windows Codex detection. The **Deutsch** link above translates the README; the setup below selects the German job-market workflow.
+
+### 1. Install this fork
+
+Install Git, a Node.js version supported by [package.json](package.json), and an AI coding CLI such as Codex. Then run:
+
+```bash
+git clone https://github.com/alireza7575/career-ops-germany.git
+cd career-ops-germany
+npm install --ignore-scripts
+```
+
+### 2. Keep your career data private
+
+Create a separate personal data folder. In the code checkout, create a `.career-ops-data` file containing that folder's absolute path, for example `C:/career-ops-data` on Windows. The marker is ignored by Git. If you version your personal data, use a separate **private** repository.
+
+Open your AI coding CLI in the code checkout and ask:
+
+> Run career-ops onboarding using the data root in .career-ops-data. Help me add my own CV, target roles, languages, location policy and salary targets. Use the German-market portal preset and German evaluation modes. Keep my personal data in the data root.
+
+For a new setup, copy [templates/portals.germany.example.yml](templates/portals.germany.example.yml) into your data folder as `portals.yml`. Review its keywords and locations for your search. If you already have a portal configuration, merge the entries you want instead of replacing it.
+
+In your data folder's `config/profile.yml`, set:
+
+```yaml
+language:
+  modes_dir: modes/de
+  output: en # Use de for German reports and application drafts.
+```
+
+Merge these settings into any existing `language` section. German-market rules and the output language are separate choices. Optionally merge [the German screening rules](templates/custom.germany.example.md) into your data folder's `modes/_custom.md`.
+
+### 3. Check setup and search
+
+From the code checkout, run:
+
+```bash
+node doctor.mjs --json --cli codex
+```
+
+Use your CLI's name if you use another agent. Then ask it:
+
+> Run career-ops scan mode for the enabled API boards and configured web searches. Screen results against my profile and report any sources you could not scan.
+
+You can also paste a job URL and ask for a German-market evaluation, or use the [local web app](web/README.md). Review each posting's location, working arrangement and language requirements before applying.
+
+See the [German-market setup guide](docs/GERMAN_MARKET.md) for details and instructions for keeping this fork updated.
+
+## Upstream quick start
+
+The npm initializer below installs upstream career-ops. To use this fork's German defaults and additions, follow **Start with the German version** above.
 
 Paste one job you were about to apply to tonight. If it comes back <em>do not apply</em>, you just got the night back. If it comes back with a plan, you know what to do next.
 
