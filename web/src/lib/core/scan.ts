@@ -13,6 +13,7 @@ import { runGermanDiscovery, type GermanSource } from "./german-boards";
 import { searchWebBoard } from "./web-boards.mjs";
 import { runDiscoveryGroups } from "./discovery-groups.mjs";
 import { pathToFileURL } from "node:url";
+import { getProfilePath } from "./profile-path.mjs";
 
 export type { DiscoveredOffer, ScanEvent, AtsSource } from "@/lib/explore";
 export { ATS_SOURCES } from "@/lib/explore";
@@ -57,7 +58,7 @@ function firstMatch(title: string, positives: string[]): string | undefined {
  */
 function loadProfileTargets(): string[] {
   try {
-    const doc = yaml.load(fs.readFileSync(path.join(careerOpsRoot(), "config", "profile.yml"), "utf8"));
+    const doc = yaml.load(fs.readFileSync(getProfilePath(careerOpsRoot()), "utf8"));
     return profileTargetKeywords(doc && typeof doc === "object" ? (doc as Record<string, unknown>) : null);
   } catch {
     return [];
@@ -164,7 +165,7 @@ type ScanJson = {
 // the default (a broken config must not block scanning).
 function readScanTimeoutMs(): number {
   try {
-    const parsed = yaml.load(fs.readFileSync(path.join(careerOpsRoot(), "config", "profile.yml"), "utf8"));
+    const parsed = yaml.load(fs.readFileSync(getProfilePath(careerOpsRoot()), "utf8"));
     return resolveScanTimeoutMs(parsed);
   } catch {
     return resolveScanTimeoutMs(undefined);

@@ -14,13 +14,14 @@
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname, relative, sep } from 'path';
 import { fileURLToPath } from 'url';
-import * as yaml from 'js-yaml';
+import { loadYaml } from './lib/yaml-document.mjs';
 import { loadCanonicalStates, foldStatusInput } from './tracker-utils.mjs';
-import { resolveColumns, parseTrackerRow } from './tracker-parse.mjs';
-import { getCareerOpsRoot, resolveTrackerPath } from './path-resolver.mjs';
+import { resolveColumns, parseTrackerRow, firstLinkTarget } from './tracker-parse.mjs';
+import { getCareerOpsRoot, getProfilePath, resolveTrackerPath } from './path-resolver.mjs';
 import { localToday } from './lib/local-today.mjs';
 import { flagValue, validateFlags } from './lib/cli-flags.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
+import { parseStatusLog, foldObservations } from './funnel-velocity.mjs';
 
 // templates/states.yml is System Layer — resolved from the codebase, not from
 // the user's data root (#3500).
@@ -28,8 +29,9 @@ const CODEBASE_ROOT = dirname(fileURLToPath(import.meta.url));
 const CAREER_OPS = getCareerOpsRoot();
 const APPS_FILE = resolveTrackerPath(CAREER_OPS);
 
-const FOLLOWUPS_FILE = join(CAREER_OPS, 'data/follow-ups.md');
-const PROFILE_FILE = process.env.CAREER_OPS_PROFILE || join(CAREER_OPS, 'config/profile.yml');
+const FOLLOWUPS_FILE = process.env.CAREER_OPS_FOLLOWUPS || join(CAREER_OPS, 'data/follow-ups.md');
+const STATUS_LOG_FILE = join(dirname(APPS_FILE), 'status-log.tsv');
+const PROFILE_FILE = getProfilePath();
 
 
 // --- CLI args ---
@@ -48,14 +50,12 @@ const appliedDaysRaw = flagValue(args, '--applied-days');
 // effect can be asserted directly, rather than only "the CLI didn't error".
 const APPLIED_DAYS_RE = /^\d+$/;
 export function parseAppliedDaysOverride(raw) {
-  const parsed = Number(raw);
-  return raw !== undefined && APPLIED_DAYS_RE.test(raw) && Number.isSafeInteger(parsed) ? parsed : null;
+  return raw !== undefined && APPLIED_DAYS_RE.test(raw) ? positiveInteger(raw) : null;
 }
 const appliedDaysOverride = parseAppliedDaysOverride(appliedDaysRaw);
 
 // --- Cadence config ---
 export const DEFAULT_CADENCE = {
-  scope: 'all',
   applied_first: 7,
   applied_subsequent: 7,
   applied_max_followups: 2,
@@ -74,36 +74,41 @@ const PROFILE_CADENCE_KEYS = {
 };
 
 function positiveInteger(value) {
-  if (typeof value !== 'number' && (typeof value !== 'string' || !/^\s*\+?\d+\s*$/.test(value))) return null;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
-}
-
-export function loadFollowupsEnabled(profilePath = PROFILE_FILE) {
-  if (!profilePath || !existsSync(profilePath)) return true;
-  try {
-    return yaml.load(readFileSync(profilePath, 'utf-8'))?.follow_ups?.enabled !== false;
-  } catch {
-    return true;
+  if (typeof value === 'string') {
+    value = value.trim();
+    if (!/^\+?\d+$/.test(value)) return null;
+    value = Number(value);
   }
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 export function loadProfileCadence(profilePath = PROFILE_FILE) {
   if (!profilePath || !existsSync(profilePath)) return {};
   let raw;
   try {
-    raw = yaml.load(readFileSync(profilePath, 'utf-8')) || {};
+    raw = loadYaml(readFileSync(profilePath, 'utf-8')) || {};
   } catch {
     return {};
   }
   const source = raw.followup_cadence || {};
   const cadence = {};
-  if (['off', 'interviews', 'all'].includes(source.scope)) cadence.scope = source.scope;
   for (const [profileKey, cadenceKey] of Object.entries(PROFILE_CADENCE_KEYS)) {
     const parsed = positiveInteger(source[profileKey]);
     if (parsed !== null) cadence[cadenceKey] = parsed;
   }
   return cadence;
+}
+
+// follow_ups.enabled: false in the profile turns the follow-up features off.
+// Anything else, including a missing or unreadable profile, keeps them on, so
+// an install that never set the key behaves exactly as before.
+export function loadFollowupsEnabled(profilePath = PROFILE_FILE) {
+  if (!profilePath || !existsSync(profilePath)) return true;
+  try {
+    return loadYaml(readFileSync(profilePath, 'utf-8'))?.follow_ups?.enabled !== false;
+  } catch {
+    return true;
+  }
 }
 
 export function resolveCadenceConfig({ profilePath = PROFILE_FILE, appliedDays = appliedDaysOverride } = {}) {
@@ -154,7 +159,7 @@ function statusAliasMap() {
   return (aliasMapCache = map);
 }
 
-const ACTIONABLE_STATUSES = ['applied', 'responded', 'interview'];
+const ACTIONABLE_STATUSES = ['applied', 'responded', 'assessment', 'interview'];
 
 export function normalizeStatus(raw) {
   // foldStatusInput, not a bare toLowerCase: JS lowercases the Turkish dotted
@@ -418,19 +423,41 @@ export function isRealCalendarDate(iso) {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }
 
+// The day each row moved to Applied, read with funnel-velocity.mjs's ledger
+// rules so corrections and retractions resolve the same way in both reports.
+export function statusLogAppliedDates(statusLogContent) {
+  const dates = new Map();
+  if (!statusLogContent) return dates;
+  let states;
+  try {
+    states = loadCanonicalStates(join(CODEBASE_ROOT, 'templates', 'states.yml'));
+  } catch (err) {
+    console.error(`[followup-cadence] cannot read canonical states, ignoring status-log.tsv: ${err.message}`);
+    return dates;
+  }
+  for (const [num, timeline] of foldObservations(parseStatusLog(statusLogContent, states).observations)) {
+    const applied = timeline.filter(o => o.to === 'Applied' && o.dayMath && isRealCalendarDate(o.date)).pop();
+    if (applied) dates.set(num, applied.date);
+  }
+  return dates;
+}
+
 // Which date the cadence is measured from, and where it came from. A caller
 // cannot otherwise tell a real application date from the evaluation-date proxy,
 // so an inferred age reads exactly like a measured one — and acting on that
 // silently-wrong number is what pushes a live application into "cold".
-export function resolveAppliedDate(app) {
+//
+// Notes rank above the ledger, as in followup-seed.mjs: a transition logged
+// without --on carries the day it was logged, not the day it was sent.
+export function resolveAppliedDate(app, statusLogDate = null) {
   // requireValidCalendarDate: an impossible date in the notes must degrade to
   // the labelled fallback rather than be reported as a measured date. One bad
   // row must not fail the whole report, so this skips rather than throws —
   // unlike followup-seed.mjs, which refuses to pin a follow-up off a bad date.
   const fromNotes = parseAppliedDate(app?.notes, { requireValidCalendarDate: true });
-  return fromNotes
-    ? { appliedDate: fromNotes, appDateSource: 'notes' }
-    : { appliedDate: app?.date ?? null, appDateSource: 'evaluation-date-fallback' };
+  if (fromNotes) return { appliedDate: fromNotes, appDateSource: 'notes' };
+  if (statusLogDate) return { appliedDate: statusLogDate, appDateSource: 'status-log' };
+  return { appliedDate: app?.date ?? null, appDateSource: 'evaluation-date-fallback' };
 }
 
 export function daysBetween(d1, d2) {
@@ -655,7 +682,7 @@ export function loadSelfIdentities(profilePath = PROFILE_FILE) {
   if (!profilePath || !existsSync(profilePath)) return new Set();
   let raw;
   try {
-    raw = yaml.load(readFileSync(profilePath, 'utf-8')) || {};
+    raw = loadYaml(readFileSync(profilePath, 'utf-8')) || {};
   } catch {
     return new Set();
   }
@@ -769,23 +796,33 @@ export function contactLabel(contact) {
 
 // --- Resolve report path ---
 export function resolveReportPath(reportField, appsFile = APPS_FILE, repoRoot = CAREER_OPS) {
-  const match = reportField.match(/\]\(([^)]+)\)/);
-  if (!match) return null;
-  // Report links in the tracker are normalized relative to the tracker file's
-  // own directory (see PR #760 — `merge-tracker.mjs --migrate`). Resolve against
-  // dirname(APPS_FILE), not the project root, otherwise relative paths like
-  // `../reports/...` (the data/applications.md layout) escape above the project.
-  const fullPath = join(dirname(appsFile), match[1]);
-  const repoRelative = relative(repoRoot, fullPath).split(sep).join('/');
-  if (repoRelative.startsWith('../') || repoRelative === '..' || !repoRelative.startsWith('reports/')) return null;
-  return existsSync(fullPath) ? repoRelative : null;
+  const target = firstLinkTarget(reportField);
+  if (target == null) return null;
+  // Two shapes name the same file. Writers emit a repo-root link,
+  // `(reports/file.md)`, and merge-tracker rewrites it relative to the tracker
+  // directory, `(../reports/file.md)` (PR #760). Try the tracker-relative path
+  // first. A link with no `..` segment is also tried from the repo root, which
+  // is where the unmigrated shape actually lives. A `..` segment is not given
+  // that second try, so the link cannot walk out of reports/.
+  const candidates = [join(dirname(appsFile), target)];
+  if (!target.startsWith('/') && !target.split(/[\\/]/).includes('..')) {
+    const fromRoot = join(repoRoot, target);
+    if (fromRoot !== candidates[0]) candidates.push(fromRoot);
+  }
+  for (const fullPath of candidates) {
+    const repoRelative = relative(repoRoot, fullPath).split(sep).join('/');
+    if (repoRelative.startsWith('../') || repoRelative === '..' || !repoRelative.startsWith('reports/')) continue;
+    if (existsSync(fullPath)) return repoRelative;
+  }
+  return null;
 }
 
 // --- Compute urgency ---
-// For responded/interview, logged follow-ups CLEAR the overdue state and the
+// For responded/assessment/interview, logged follow-ups CLEAR the overdue state and the
 // clock restarts from the last touch (re-overdue every responded_subsequent
 // days) — matching the cadence table in modes/followup.md ("Responded: every
-// 3 days · Interview: thank-you, then every 3 days, no limit").
+// 3 days · Assessment uses the responded cadence · Interview: thank-you, then
+// every 3 days, no limit").
 export function computeUrgency(status, daysSinceApp, daysSinceLastFollowup, followupCount) {
   if (status === 'applied') {
     if (followupCount >= CADENCE.applied_max_followups) return 'cold';
@@ -793,7 +830,7 @@ export function computeUrgency(status, daysSinceApp, daysSinceLastFollowup, foll
     if (followupCount > 0 && daysSinceLastFollowup !== null && daysSinceLastFollowup >= CADENCE.applied_subsequent) return 'overdue';
     return 'waiting';
   }
-  if (status === 'responded') {
+  if (status === 'responded' || status === 'assessment') {
     if (daysSinceLastFollowup !== null) {
       return daysSinceLastFollowup >= CADENCE.responded_subsequent ? 'overdue' : 'waiting';
     }
@@ -818,7 +855,7 @@ export function computeNextFollowupDate(status, appDate, lastFollowupDate, follo
     if (lastFollowupDate) return addDays(parseDate(lastFollowupDate), CADENCE.applied_subsequent);
     return addDays(parseDate(appDate), CADENCE.applied_first);
   }
-  if (status === 'responded') {
+  if (status === 'responded' || status === 'assessment') {
     if (lastFollowupDate) return addDays(parseDate(lastFollowupDate), CADENCE.responded_subsequent);
     return addDays(parseDate(appDate), CADENCE.responded_initial);
   }
@@ -840,7 +877,16 @@ export function computeNextFollowupDate(status, appDate, lastFollowupDate, follo
 // requires followupCount >= applied_max_followups) simply never triggers —
 // no error, no guessing, matching the same "absent optional file = pass
 // through" convention used elsewhere in this project.
-export function analyzeFromContent(trackerContent, followupsContent = '', { scope = CADENCE.scope } = {}) {
+export function analyzeFromContent(trackerContent, followupsContent = '', { enabled = true, statusLogContent = '' } = {}) {
+  if (!enabled) {
+    return {
+      followupsEnabled: false,
+      metadata: { analysisDate: today().toISOString().split('T')[0], totalTracked: 0, actionable: 0, overdue: 0, urgent: 0, cold: 0, waiting: 0, retired: 0 },
+      entries: [],
+      cadenceConfig: CADENCE,
+      cadenceDefaults: DEFAULT_CADENCE,
+    };
+  }
   const apps = parseTrackerContent(trackerContent);
   if (apps.length === 0) {
     // cadenceDefaults rides along on the error. It is a constant, so it is just
@@ -848,19 +894,26 @@ export function analyzeFromContent(trackerContent, followupsContent = '', { scop
     // state where a consumer cannot do without it: on a first run the web
     // cadence form has no profile overrides to fall back on either, so
     // withholding it renders six empty fields with nothing to type back in.
+    // The rest of the normal shape rides along too, zeroed, so a reader that
+    // skips `error` (the web follow-ups page) renders an empty tracker instead
+    // of "cadence unavailable".
     return {
       error: 'No applications found in tracker.',
       noData: true,
+      metadata: {
+        analysisDate: today().toISOString().split('T')[0],
+        totalTracked: 0, actionable: 0, overdue: 0, urgent: 0, cold: 0, waiting: 0, retired: 0,
+      },
       entries: [],
-      metadata: { analysisDate: localToday(), totalTracked: 0, actionable: 0, overdue: 0, urgent: 0, cold: 0, waiting: 0, retired: 0 },
-      cadenceDefaults: DEFAULT_CADENCE,
       cadenceConfig: CADENCE,
+      cadenceDefaults: DEFAULT_CADENCE,
     };
   }
 
   const followups = parseFollowups(followupsContent);
   const overrides = parseNextOverrides(String(followupsContent ?? ''));
   const cleared = parseClearedDirectives(followupsContent);
+  const appliedOn = statusLogAppliedDates(statusLogContent);
 
   // Group follow-ups by app number
   const followupsByApp = new Map();
@@ -875,12 +928,10 @@ export function analyzeFromContent(trackerContent, followupsContent = '', { scop
   for (const app of apps) {
     const normalized = normalizeStatus(app.status);
     if (!ACTIONABLE_STATUSES.includes(normalized)) continue;
-    if (scope === 'off' || (scope === 'interviews' && normalized !== 'interview')) continue;
 
-    // Prefer the "Applied YYYY-MM-DD" date from notes; fall back to the column.
     // appDateSource travels with the entry so a consumer can tell a measured
     // age from one inferred off the evaluation date.
-    const { appliedDate, appDateSource } = resolveAppliedDate(app);
+    const { appliedDate, appDateSource } = resolveAppliedDate(app, appliedOn.get(app.num));
     const appDate = parseDate(appliedDate);
     if (!appDate) continue;
 
@@ -954,9 +1005,13 @@ export function analyzeFromContent(trackerContent, followupsContent = '', { scop
     });
   }
 
-  // Sort by urgency priority: urgent > overdue > waiting > cold
   const urgencyOrder = { urgent: 0, overdue: 1, waiting: 2, cold: 3 };
-  entries.sort((a, b) => (urgencyOrder[a.urgency] ?? 9) - (urgencyOrder[b.urgency] ?? 9));
+  const byPressure = (a, b) =>
+    (urgencyOrder[a.urgency] ?? 9) - (urgencyOrder[b.urgency] ?? 9)
+    || (a.daysUntilNext ?? Infinity) - (b.daysUntilNext ?? Infinity)
+    || b.daysSinceApplication - a.daysSinceApplication
+    || a.num - b.num;
+  entries.sort(byPressure);
 
   // Retired applications are counted but not listed — surfacing them in the
   // entries array would defeat the point of retiring them, and the count keeps
@@ -993,18 +1048,17 @@ export function analyzeFromContent(trackerContent, followupsContent = '', { scop
 
 // --- Main analysis (disk-backed CLI entry point) ---
 function analyze() {
+  if (!loadFollowupsEnabled()) return analyzeFromContent('', '', { enabled: false });
   const trackerContent = existsSync(APPS_FILE) ? readFileSync(APPS_FILE, 'utf-8') : '';
-  if (!loadFollowupsEnabled()) {
-    return { ...analyzeFromContent(trackerContent, '', { scope: 'off' }), followupsEnabled: false };
-  }
   const followupsContent = existsSync(FOLLOWUPS_FILE) ? readFileSync(FOLLOWUPS_FILE, 'utf-8') : '';
-  return analyzeFromContent(trackerContent, followupsContent);
+  const statusLogContent = existsSync(STATUS_LOG_FILE) ? readFileSync(STATUS_LOG_FILE, 'utf-8') : '';
+  return analyzeFromContent(trackerContent, followupsContent, { enabled: loadFollowupsEnabled(), statusLogContent });
 }
 
 // --- Summary mode ---
 function printSummary(result) {
   if (result.followupsEnabled === false) {
-    console.log('Follow-ups are turned off (follow_ups.enabled: false in config/profile.yml).');
+    console.log('\nFollow-ups are turned off (follow_ups.enabled: false in config/profile.yml).\n');
     return;
   }
   if (result.error) {
@@ -1020,12 +1074,7 @@ function printSummary(result) {
   console.log(`${'='.repeat(70)}\n`);
 
   if (entries.length === 0) {
-    const message = result.cadenceConfig.scope === 'off'
-      ? 'Follow-up reminders are turned off.'
-      : result.cadenceConfig.scope === 'interviews'
-        ? 'No interviews currently need a follow-up.'
-        : 'No active applications to track. Apply to some roles first.';
-    console.log(`  ${message}\n`);
+    console.log('  No active applications to track. Apply to some roles first.\n');
     return;
   }
 
@@ -1105,5 +1154,8 @@ if (isMainModule(import.meta.url)) {
     console.log(JSON.stringify(result, null, 2));
   }
 
+  // An empty tracker is a new user, not a failure. analyze-patterns.mjs and the
+  // other tracker readers exit 0 here too; exiting 1 made the web dashboard read
+  // a first run as "cadence unavailable".
   if (result.error && !result.noData) process.exit(1);
 }

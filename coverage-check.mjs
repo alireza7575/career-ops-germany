@@ -13,15 +13,17 @@
 import { appendFileSync, existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import * as yaml from 'js-yaml';
-import { buildLocationFilter, normalizeUrlForDedup, PORTALS_PATH, SCAN_HISTORY_PATH, PIPELINE_PATH } from './scan.mjs';
+import { loadYaml } from './lib/yaml-document.mjs';
+import { buildLocationFilter, seenJobKey, PORTALS_PATH, SCAN_HISTORY_PATH, PIPELINE_PATH } from './scan.mjs';
 import { buildTitleFilter } from './title-keywords.mjs';
 import { loadProviders, resolveProvider } from './providers/_registry.mjs';
+import { mergeProviderPlugins } from './plugins/_engine.mjs';
 import { normalizeCompany } from './tracker-utils.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { localToday } from './lib/local-today.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { flagValue, validateFlags } from './lib/cli-flags.mjs';
+import { scanHistoryDataLines } from './lib/scan-history-columns.mjs';
 
 const CODE_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const DATA_ROOT = getCareerOpsRoot();
@@ -55,7 +57,10 @@ export function atsFromUrl(url) {
   let u;
   try { u = new URL(url); } catch { return { ats: null, host: null }; }
   const host = u.hostname.toLowerCase();
-  const seg = u.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  // A stray % in a pasted URL ("100%-remote") is not a valid escape and makes
+  // decodeURIComponent throw; keep such a segment as written.
+  const decode = (segment) => { try { return decodeURIComponent(segment); } catch { return segment; } };
+  const seg = u.pathname.split('/').filter(Boolean).map(decode);
   if (/(^|\.)greenhouse\.io$/.test(host)) {
     if (seg[0] && !['embed', 'v1'].includes(seg[0])) return { ats: 'greenhouse', slug: seg[0].toLowerCase(), host };
     const forParam = u.searchParams.get('for');
@@ -123,7 +128,7 @@ export function diagnose(posting, ctx) {
   const locationOk = location ? buildLocationFilter(ctx.config.location_filter)(location, url, title) : null;
   const target = atsFromUrl(url);
 
-  const seen = ctx.history.get(normalizeUrlForDedup(url));
+  const seen = ctx.history.get(seenJobKey(url));
   if (seen) {
     const [, firstSeen, portal, , , status] = seen;
     evidence.push(`scan-history: ${status} on ${firstSeen} via ${portal}`);
@@ -151,8 +156,9 @@ export function diagnose(posting, ctx) {
     }
     if (entry.enabled === false) return { gap: 'tracked-disabled', evidence, fix: `re-enable "${entry.name}" if its board is live` };
     const resolved = resolveProvider(entry, ctx.providers);
+    const inactiveReason = resolved && !resolved.error ? resolved.provider.inactiveReason : undefined;
     if (resolved && !resolved.error) {
-      evidence.push(`provider: ${resolved.provider.id}`);
+      evidence.push(`provider: ${resolved.provider.id}${inactiveReason ? ` (plugin inactive: ${inactiveReason})` : ''}`);
     } else {
       // Scanners with their own company lists (scan-hn.mjs, scan-interamt.mjs, ...)
       // show up only in scan-history, under their own portal names.
@@ -171,6 +177,11 @@ export function diagnose(posting, ctx) {
     }
     if (!titleOk(title)) return { gap: 'tracked-title-filter', evidence, fix: `title keyword: no title_filter keyword matches "${title}"` };
     if (locationOk === false) return { gap: 'tracked-location-filter', evidence, fix: `location: location_filter drops "${location}"` };
+    // An enabled provider plugin that cannot run (missing key, failed
+    // integrity check) resolves to a stub: the scanner never reads this board.
+    if (inactiveReason) {
+      return { gap: 'tracked-not-seen', evidence, fix: `activate the "${resolved.provider.id}" plugin: ${inactiveReason} (node doctor.mjs shows its setup)` };
+    }
     if (otherBoard) {
       return { gap: 'tracked-not-seen', evidence, fix: `the entry reads another board: point "${entry.name}".careers_url at ${careersUrlFor(target)}, or add that board as a second entry` };
     }
@@ -212,15 +223,15 @@ export function diagnose(posting, ctx) {
 }
 
 export function loadContext() {
-  const config = yaml.load(readFileSync(PORTALS_PATH, 'utf8')) || {};
+  const config = loadYaml(readFileSync(PORTALS_PATH, 'utf8')) || {};
   const entries = [...(config.tracked_companies || []), ...(config.job_boards || [])].filter(e => e && typeof e === 'object');
   const history = new Map();
   const historyCompanies = new Map();
   if (existsSync(SCAN_HISTORY_PATH)) {
-    for (const line of readFileSync(SCAN_HISTORY_PATH, 'utf8').split('\n').slice(1)) {
+    for (const line of scanHistoryDataLines(readFileSync(SCAN_HISTORY_PATH, 'utf8'))) {
       const row = line.split('\t');
       if (!row[0]) continue;
-      history.set(normalizeUrlForDedup(row[0]), row);
+      history.set(seenJobKey(row[0]), row);
       const key = companyKey(row[4]);
       if (key) (historyCompanies.get(key) || historyCompanies.set(key, new Set()).get(key)).add(row[2]);
     }
@@ -249,14 +260,16 @@ const clean = (s) => String(s ?? '').replace(/[\t\r\n]+/g, ' ').trim();
 
 export function appendMiss(file, posting, result, note, date) {
   const existing = existsSync(file) ? readFileSync(file, 'utf8') : '';
-  const key = normalizeUrlForDedup(posting.url);
+  const key = seenJobKey(posting.url);
   const logged = existing.split('\n').slice(1).some(l => {
     const url = l.split('\t')[1];
-    return Boolean(url) && normalizeUrlForDedup(url) === key;
+    return Boolean(url) && seenJobKey(url) === key;
   });
   if (logged) return false;
   const row = [date, posting.url, posting.company, posting.title, result.gap, result.fix, note].map(clean).join('\t');
-  appendFileSync(file, (existing ? '' : MISSES_HEADER + '\n') + row + '\n');
+  // An unterminated last row (a hand edit) is closed first, or the new row fuses onto it.
+  const lead = existing ? (existing.endsWith('\n') ? '' : '\n') : MISSES_HEADER + '\n';
+  appendFileSync(file, lead + row + '\n');
   return true;
 }
 
@@ -270,7 +283,16 @@ async function main() {
     console.error(`Error: a URL, --company and --title are required\n\n${USAGE}`);
     process.exit(1);
   }
-  const ctx = { ...loadContext(), providers: await loadProviders(path.join(CODE_ROOT, 'providers')) };
+  if (!existsSync(PORTALS_PATH)) {
+    console.error(`Error: portals.yml not found at ${PORTALS_PATH}. Run onboarding first - the check reads its title_filter and tracked_companies.`);
+    process.exit(1);
+  }
+  const providers = await loadProviders(path.join(CODE_ROOT, 'providers'));
+  // Same provider map scan.mjs builds (#4026): without the enabled provider
+  // plugins, an entry the scanner reads through one is diagnosed as
+  // tracked-no-provider. No-op when config/plugins.yml is absent.
+  await mergeProviderPlugins(providers, { root: CODE_ROOT, dataRoot: DATA_ROOT });
+  const ctx = { ...loadContext(), providers };
   const result = diagnose(posting, ctx);
   const log = args.includes('--log');
   const logged = log && result.gap !== 'surfaced'

@@ -51,11 +51,11 @@
 export const CAPS = Object.freeze({
   /** Reads local files only. The strictest record, and the fallback for anything unrecognized. */
   localReadOnly: Object.freeze({ writes: false, network: false }),
-  /** Searches the web and reads what it finds, but is never handed a url to open, and must not write. */
+  /** Uses model search while local files stay read-only; handed URLs are fetched by the platform. */
   webSearchOnly: Object.freeze({ writes: false, network: "search" }),
   /** Reads and fetches urls it is given, but must not write. */
   networkReadOnly: Object.freeze({ writes: false, network: "fetch" }),
-  /** Writes canonical artifacts and fetches — the evaluation/repair workers. */
+  /** Writes canonical artifacts and fetches — portal repair workers. */
   workspaceWrite: Object.freeze({ writes: true, network: "fetch" }),
 });
 
@@ -77,18 +77,17 @@ export const KNOWN_KINDS = Object.freeze(["pdf", "research", "evaluate", "fix-po
  * - pdf       reads cv.md/profile/report/template and returns the CV inline in an
  *             envelope the backend persists — no write, and no fetch.
  * - research  "use WebFetch for URLs" — fetches, reports, never writes.
- * - evaluate  "Use WebFetch to read the posting", then writes the report and merges
- *             the tracker.
+ * - evaluate  reads platform-fetched posting text and emits a report envelope;
+ *             the platform writes the report and merges the tracker.
  * - fix-portal rewrites one portals.yml entry after finding a working ATS URL.
  *
- * No kind here is search-only: every web-using kind is pointed at a url (the
- * posting, the board). CAPS.webSearchOnly belongs to AI search, which is a route
- * of its own and declares its record inline.
+ * Evaluate is search-only because the platform retrieves its posting before
+ * the worker starts; Codex can therefore keep a read-only filesystem sandbox.
  */
 const KIND_CAPABILITIES = Object.freeze({
   pdf: CAPS.localReadOnly,
   research: CAPS.networkReadOnly,
-  evaluate: CAPS.workspaceWrite,
+  evaluate: CAPS.webSearchOnly,
   "fix-portal": CAPS.workspaceWrite,
 });
 

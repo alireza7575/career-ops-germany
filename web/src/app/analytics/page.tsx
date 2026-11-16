@@ -5,6 +5,7 @@ import { canonStatus, scoreNum } from "@/lib/format";
 import { cumulativeTilesWithHistory } from "@/lib/funnel-tiles.mjs";
 import { FunnelRates } from "@/components/analytics/funnel-rates";
 import { SearchInsights } from "@/components/analytics/search-insights";
+import { computeProgressMetrics } from "@/lib/analytics-metrics.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -82,7 +83,6 @@ async function ProgressView({ applications }: { applications: ReturnType<typeof 
   const maxStage = Math.max(1, ...stageCounts.map((s) => s.n));
 
   const scores = applications.map((a) => scoreNum(a.score)).filter((n) => !Number.isNaN(n));
-  const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
   const buckets = [
     { label: "4.5 – 5.0", test: (n: number) => n >= 4.5 },
     { label: "4.0 – 4.4", test: (n: number) => n >= 4 && n < 4.5 },
@@ -105,20 +105,21 @@ async function ProgressView({ applications }: { applications: ReturnType<typeof 
     applications.map((a) => ({ n: a.n, status: canonStatus(a.status) })),
     readApplicationStatusLog(),
   );
+  const metrics = computeProgressMetrics(applications, { interviews, offers });
 
   return (
     <>
       {/* headline stats */}
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat value={total} label="evaluated" />
-        <Stat value={avg ? avg.toFixed(2) : "—"} label="avg score" />
+        <Stat value={metrics.avgScore ? metrics.avgScore.toFixed(2) : "—"} label="avg score" />
         <Stat
           value={interviews}
           label="interviews"
           hint={interviews === 0 ? "Interviews follow replies — keep follow-ups warm →" : undefined}
         />
         <Stat
-          value={offers}
+          value={metrics.totalOffers}
           label="offers"
           hint={offers === 0 ? "Offers follow interviews — keep the conversations going →" : undefined}
         />

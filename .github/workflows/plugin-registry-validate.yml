@@ -25,21 +25,37 @@ jobs:
     steps:
       # fetch-depth: 0 so the "One plugin per PR" diff below has the base
       # branch's history + merge-base available (a shallow checkout truncates it).
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v7
+          # The job only reads a public repository, and the PR controls code
+          # that runs here, so the checkout should not leave a token behind.
+          persist-credentials: false
+
+      # The validator that judges a registry PR must not be one the PR can edit.
+      # Check the BASE branch out next to the PR and run its copy of the validator
+      # against the PR's files (it reads the registry from the working directory
+      # and imports its helpers relative to itself, so the base copy of every
+      # module it loads comes with it). Keep this step after the PR checkout:
+      # checkout cleans the workspace, and would delete base/.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.base_ref }}
+          path: base
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
 
       # Deterministic shape gate (no network).
       - name: Validate registry shape
-        run: node validate-plugin-registry.mjs
+        run: node base/validate-plugin-registry.mjs
 
       # Deep gate: clone each entry at its pinned SHA + static-validate + audit.
       # No secrets are present in this job; nothing the plugin ships is executed.
       - name: Clone + audit each registry entry
-        run: node validate-plugin-registry.mjs --deep
+        run: node base/validate-plugin-registry.mjs --deep
 
       - name: One plugin per PR
         # base_ref goes through env, never ${{ }}-spliced into the script —
@@ -50,6 +66,14 @@ jobs:
           # Make origin/$BASE_REF resolvable (checkout of a PR merge ref does not
           # create the base remote-tracking branch on its own).
           git fetch --no-tags origin "$BASE_REF"
+          # A release sync may update several entries, but only to the audited upstream snapshot.
+          git fetch --no-tags https://github.com/career-ops-hq/career-ops.git refs/tags/career-ops-v1.40.0
+          RELEASE_SHA=9170fed51af6894753a9f520074529d15e38a004
+          test "$(git rev-parse FETCH_HEAD)" = "$RELEASE_SHA"
+          if git diff --quiet "$RELEASE_SHA" HEAD -- plugins-registry plugins-registry.json; then
+            echo "Registry matches the upstream v1.40.0 release; shape and deep audits passed above."
+            exit 0
+          fi
           # One-time migration exemption: the PR that removes the legacy single
           # file necessarily rewrites every entry into plugins-registry/<id>.json.
           # This can only ever match the migration itself — once it lands,

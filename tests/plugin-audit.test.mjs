@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditPlugin } from '../plugin-audit.mjs';
+import { describeSpawn } from './helpers/describe-spawn.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const SCRIPT = join(ROOT, 'plugin-audit.mjs');
@@ -25,20 +26,20 @@ test('--help prints usage and exits 0', () => {
   const r = runAudit('--help');
   assert.match(r.stdout, /Usage:/);
   assert.match(r.stdout, /node plugin-audit\.mjs <plugin-dir>/);
-  assert.equal(r.status, 0, '--help must exit 0');
+  assert.equal(r.status, 0, describeSpawn(r, '--help must exit 0'));
 });
 
 test('-h prints usage and exits 0', () => {
   const r = runAudit('-h');
   assert.match(r.stdout, /Usage:/);
   assert.match(r.stdout, /node plugin-audit\.mjs <plugin-dir>/);
-  assert.equal(r.status, 0, '-h must exit 0');
+  assert.equal(r.status, 0, describeSpawn(r, '-h must exit 0'));
 });
 
 test('--bogus unrecognized flag is rejected and exits 1', () => {
   const r = runAudit('--bogus');
   assert.match(r.stderr, /Error: unrecognized flag\(s\): --bogus\. Valid flags: --help, -h/);
-  assert.equal(r.status, 1, 'unrecognized flag must exit 1');
+  assert.equal(r.status, 1, describeSpawn(r, 'unrecognized flag must exit 1'));
 });
 
 test('valid directory runs the audit', () => {
@@ -52,7 +53,7 @@ test('valid directory runs the audit', () => {
 test('help exits before checking a missing directory', () => {
   for (const flag of ['--help', '-h']) {
     const r = runAudit(flag, join(ROOT, '__missing_plugin_audit_fixture__'));
-    assert.equal(r.status, 0);
+    assert.equal(r.status, 0, describeSpawn(r));
     assert.match(r.stdout, /Usage:/);
     assert.equal(r.stderr, '');
   }
@@ -60,7 +61,7 @@ test('help exits before checking a missing directory', () => {
 
 test('--bogus --help is rejected as unknown flag before checking help', () => {
   const r = runAudit('--bogus', '--help');
-  assert.equal(r.status, 1);
+  assert.equal(r.status, 1, describeSpawn(r));
   assert.equal(r.stdout, '');
   assert.match(r.stderr, /Error: unrecognized flag\(s\): --bogus/);
 });

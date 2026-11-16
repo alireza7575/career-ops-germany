@@ -2,7 +2,7 @@
 import { pass, fail, run, NODE, ROOT, lastRunFailure } from './helpers.mjs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
-import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import assert from 'node:assert/strict';
 
@@ -40,17 +40,6 @@ try {
     responseRate: 100, interviewRate: 100, offerRate: 0, smallSample: true, basis: 'ledger',
   });
   pass('canonicalized SKIP rows cannot recover prior interview or offer stages');
-
-  const assessment = stats.computeFunnelWithHistory(new Map([[1, 'Assessment']]), []);
-  assert.equal(assessment.everApplied, 1);
-  assert.equal(assessment.everResponded, 1);
-  assert.equal(assessment.everInterview, 0);
-  assert.equal(assessment.everOffer, 0);
-  assert.deepEqual(stats.computeFunnel({ Assessment: 1 }), {
-    everApplied: 1, everResponded: 1, everInterview: 0, everOffer: 0,
-    responseRate: 100, interviewRate: 0, offerRate: 0, smallSample: true,
-  });
-  pass('Assessment counts as a response without inflating interviews or offers');
 
   // Tracker roll-up — CRLF input on purpose (Windows checkouts).
   const trackerMd = [
@@ -103,6 +92,12 @@ try {
     pass('computeFunnel counts Hired into every stage through everOffer');
   } else {
     fail(`computeFunnel mishandles Hired: ${JSON.stringify(fh)}`);
+  }
+  const fa = stats.computeFunnel({ Applied: 1, Assessment: 1 });
+  if (fa.everApplied === 2 && fa.everResponded === 1 && fa.everInterview === 0) {
+    pass('computeFunnel treats Assessment as responded-before-interview');
+  } else {
+    fail(`computeFunnel mishandles Assessment: ${JSON.stringify(fa)}`);
   }
   if (stats.computeFunnel({ Applied: 3 }).smallSample === true) {
     pass('computeFunnel flags small samples (everApplied < 10)');
@@ -317,18 +312,19 @@ try {
     fail(`stats.mjs --bogus did not fail as expected: exit=${bogusFailure?.status ?? 'null'} output=${bogusOutput.trim()}`);
   }
 
-  // Keep this CLI check independent of the user's marker and reminder policy.
-  const coldRoot = mkdtempSync(join(tmpdir(), 'career-ops-stats-cold-'));
-  const { mkdirSync } = await import('fs');
+  // --summary cold-classification integration (#2123): the CLI resolves its
+  // tracker and follow-ups through the data root, so give it a root of its own.
+  // This used to overwrite the checkout's live data/applications.md and
+  // data/follow-ups.md and put them back from a variable in `finally` — which
+  // an interrupted run never reaches, leaving the fixture where the tracker
+  // was, in a directory git does not track (#5113).
+  const coldRoot = mkdtempSync(join(tmpdir(), 'co-stats-cold-'));
   try {
     mkdirSync(join(coldRoot, 'data'));
-    mkdirSync(join(coldRoot, 'config'));
     writeFileSync(join(coldRoot, 'data', 'applications.md'), coldTrackerMd);
     writeFileSync(join(coldRoot, 'data', 'follow-ups.md'), coldFollowupsMd);
-    const coldProfile = join(coldRoot, 'config', 'profile.yml');
-    writeFileSync(coldProfile, 'followup_cadence:\n  scope: off\n');
     const coldSummaryOut = run(NODE, [join(ROOT, 'stats.mjs'), '--summary'], {
-      env: { ...process.env, CAREER_OPS_ROOT: coldRoot, CAREER_OPS_TRACKER: join(coldRoot, 'data', 'applications.md'), CAREER_OPS_PROFILE: coldProfile },
+      env: { ...process.env, CAREER_OPS_ROOT: coldRoot, CAREER_OPS_DATA_DIR: '' },
     });
     if (coldSummaryOut && coldSummaryOut.includes('3 active (2 live, 1 cold)')) {
       pass('stats.mjs --summary integrates live/cold counts into the existing Tracker line');

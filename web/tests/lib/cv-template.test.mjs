@@ -58,6 +58,7 @@ function fakeCheckout({ profileAt = "config/profile.yml", template = "mine", pac
   // one throws at module load and every case below falls back to the base
   // template, which is the same silent pass the js-yaml link below prevents.
   fs.mkdirSync(path.join(root, "lib"), { recursive: true });
+  fs.copyFileSync(path.join(CORE, "lib", "yaml-document.mjs"), path.join(root, "lib", "yaml-document.mjs"));
   fs.copyFileSync(
     path.join(CORE, "lib", "is-main-module.mjs"),
     path.join(root, "lib", "is-main-module.mjs"),
@@ -72,6 +73,7 @@ function fakeCheckout({ profileAt = "config/profile.yml", template = "mine", pac
     path.join(CORE, "providers", "_html-entities.mjs"),
     path.join(root, "providers", "_html-entities.mjs"),
   );
+  fs.copyFileSync(path.join(CORE, "providers", "_html-entity-table.mjs"), path.join(root, "providers", "_html-entity-table.mjs"));
   // js-yaml is a bare specifier: outside the checkout there is no node_modules on
   // the way up, the import throws, and EVERY case below would fall back to the
   // base template — i.e. pass for the reason the fix exists to remove.

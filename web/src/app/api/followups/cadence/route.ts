@@ -5,6 +5,7 @@ import * as yaml from "js-yaml";
 import { careerOpsRoot, rootScript } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
 import { isMapping } from "@/lib/portals-config.mjs";
+import { getProfilePath } from "@/lib/core/profile-path.mjs";
 import { PROFILE_CADENCE_KEYS, type ProfileCadenceKey, type FollowupScope } from "@/lib/followups";
 
 export const runtime = "nodejs";
@@ -48,7 +49,6 @@ async function readCoreDefaults(): Promise<({ scope: FollowupScope } & Partial<R
     const parsed = JSON.parse(stdout.slice(start)) as { cadenceDefaults?: unknown };
     if (!isObj(parsed.cadenceDefaults)) return null;
     const core = parsed.cadenceDefaults;
-    if (!isScope(core.scope)) return null;
     // ALL-OR-NOTHING, and no coercion. Number.parseInt would accept "3.5" as 3
     // and "7days" as 7, and a per-key filter would report defaultsAvailable:
     // true off a single valid key — either way the form would show a baseline
@@ -62,7 +62,7 @@ async function readCoreDefaults(): Promise<({ scope: FollowupScope } & Partial<R
       if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) return null;
       out[key] = raw;
     }
-    return { ...out, scope: core.scope };
+    return { ...out, scope: isScope(core.scope) ? core.scope : "all" };
   } catch {
     return null;
   }
@@ -73,7 +73,7 @@ function isScope(value: unknown): value is FollowupScope {
 }
 
 export async function GET() {
-  const file = path.join(careerOpsRoot(), "config", "profile.yml");
+  const file = getProfilePath(careerOpsRoot());
   const overrides: Partial<Record<ProfileCadenceKey, number>> & { scope?: FollowupScope } = {};
   if (fs.existsSync(file)) {
     let profile: Record<string, unknown> = {};
@@ -122,7 +122,7 @@ export async function POST(req: Request) {
   if (Object.keys(cadence).length === 0) return Response.json({ error: "nothing to write" }, { status: 400 });
 
   const root = careerOpsRoot();
-  const file = path.join(root, "config", "profile.yml");
+  const file = getProfilePath(root);
   let base: Record<string, unknown> = {};
   if (!fs.existsSync(file)) {
     // A cadence setting cannot make an unconfigured profile into a real one.

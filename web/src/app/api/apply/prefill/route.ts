@@ -6,6 +6,7 @@ import { getSession } from "@/lib/apply/session";
 import { resolveSessionCv } from "@/lib/apply/cv";
 import { applyCvSource } from "@/lib/apply/cv-source.mjs";
 import { buildAnswerPrompt } from "@/lib/apply/answer-prompt.mjs";
+import { profileRef } from "@/lib/core/profile-path.mjs";
 import { runPlanner } from "@/lib/apply/planner";
 import { extractJsonObject } from "@/lib/extract-json-object.mjs";
 
@@ -98,7 +99,7 @@ export async function POST(req: Request) {
       // stapled to them cannot describe different documents.
       const cvPath = await resolveSessionCv({ company, application, title: s.title });
       const cvSource = cvPath ? applyCvSource(careerOpsRoot(), cvPath) : null;
-      const prompt = buildAnswerPrompt({ title: s.title, fields: s.fields, memory: mem, cvSource });
+      const prompt = buildAnswerPrompt({ title: s.title, fields: s.fields, memory: mem, cvSource, profile: profileRef(careerOpsRoot()) });
 
       log(`Form: "${s.title}" · ${s.fields.length} fields · prompt ${prompt.length} chars · memory ${mem.length} chars`);
       log(`CV source: ${cvSource ?? "none found — answers will come from cv.md"}`);

@@ -1,7 +1,8 @@
 // tests/scaffolder-npm-command.test.mjs — `npx @santifer/career-ops init` must be able to run npm on Windows
 import { execFileSync } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
+import { tmpdir } from 'os';
 import { pass, fail, ROOT } from './helpers.mjs';
 import { npmCommand } from '../scaffolder/bin/npm-command.mjs';
 
@@ -25,31 +26,35 @@ check('Windows under npx runs npm-cli.js with the current Node, never npm.cmd',
   npmCommand(['install'], { platform: 'win32', env: { npm_execpath: NPM_CLI }, execPath: NODE_EXE }),
   { file: NODE_EXE, args: [NPM_CLI, 'install'] });
 
-check('Windows without npm_execpath falls back to one fixed cmd.exe command line',
-  npmCommand(['install'], { platform: 'win32', env: { ComSpec: 'C:\\Windows\\system32\\cmd.exe' } }),
-  { file: 'C:\\Windows\\system32\\cmd.exe', args: ['/d', '/s', '/c', 'npm install'] });
-
-check('Windows with no ComSpec still finds cmd.exe',
-  npmCommand(['install'], { platform: 'win32', env: {} }).file,
-  'cmd.exe');
+const temp = mkdtempSync(join(tmpdir(), 'career-ops-npm-'));
+const fakeNode = join(temp, 'node.exe');
+const bundledCli = join(temp, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+mkdirSync(dirname(bundledCli), { recursive: true });
+writeFileSync(bundledCli, '');
+check('Windows without npm_execpath runs bundled npm-cli.js with separate arguments',
+  npmCommand(['install', '--prefix', 'folder with spaces'], { platform: 'win32', env: {}, execPath: fakeNode }),
+  { file: fakeNode, args: [bundledCli, 'install', '--prefix', 'folder with spaces'] });
 
 // pnpm dlx / bunx also set npm_execpath, to their own binary: running that as
 // "npm" would install with a different package manager.
 for (const other of ['C:\\pnpm\\pnpm.cjs', 'C:\\Users\\me\\.bun\\bin\\bun.exe', 'C:\\yarn\\yarn.js']) {
   check(`Windows ignores a non-npm npm_execpath (${other.split('\\').pop()})`,
-    npmCommand(['install'], { platform: 'win32', env: { npm_execpath: other, ComSpec: 'cmd.exe' } }).args,
-    ['/d', '/s', '/c', 'npm install']);
+    npmCommand(['install'], { platform: 'win32', env: { npm_execpath: other }, execPath: fakeNode }),
+    { file: fakeNode, args: [bundledCli, 'install'] });
 }
 
-// 2. Arguments joined into a cmd.exe command line must not carry shell syntax.
-for (const bad of ['install & calc', 'a|b', '"x"', '%PATH%', '']) {
-  try {
-    npmCommand([bad], { platform: 'win32', env: {} });
-    fail(`npmCommand should refuse ${JSON.stringify(bad)}`);
-  } catch {
-    pass(`npmCommand refuses ${JSON.stringify(bad)}`);
-  }
+// 2. Arguments remain individual tokens, even when they contain shell syntax.
+check('Windows passes metacharacters as one argument',
+  npmCommand(['install & calc'], { platform: 'win32', env: {}, execPath: fakeNode }),
+  { file: fakeNode, args: [bundledCli, 'install & calc'] });
+try {
+  npmCommand(['install'], { platform: 'win32', env: {}, execPath: join(temp, 'missing', 'node.exe') });
+  fail('npmCommand should fail when npm is missing');
+} catch (err) {
+  if (/npm-cli\.js was not found/.test(err.message)) pass('npmCommand fails clearly when npm is missing');
+  else fail(`unexpected missing npm error: ${err.message}`);
 }
+rmSync(temp, { recursive: true, force: true });
 
 // 0. The usage text must name the package that is actually published. It said
 //    `npx career-ops init`, and "career-ops" (unscoped) is not ours on npm: a
@@ -85,7 +90,7 @@ if (process.platform === 'win32') {
       fail(`${label}: ${err.code || ''} ${err.message.split('\n')[0]}`);
     }
   };
-  runs('Windows cmd.exe fallback', npmCommand(['--version'], { env: { ComSpec: process.env.ComSpec } }));
+  runs('Windows bundled npm-cli.js', npmCommand(['--version'], { env: process.env }));
   // test-all is usually run with plain `node`, so npm_execpath is unset here;
   // the npm bundled next to node.exe stands in for the one npx would export.
   const bundled = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');

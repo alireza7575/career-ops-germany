@@ -2,11 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { liveServerSkip } from "../helpers/live-server.mjs";
 
 const url = process.env.PIPELINE_STATUS_TEST_URL;
 const root = process.env.PIPELINE_STATUS_TEST_ROOT;
 
-test("Today Skip reports failure and only disappears after a durable save", { skip: !url || !root, timeout: 120_000 }, async (t) => {
+test("Today Skip reports failure and only disappears after a durable save", { skip: liveServerSkip("PIPELINE_STATUS_TEST_URL", "PIPELINE_STATUS_TEST_ROOT"), timeout: 120_000 }, async (t) => {
   assert.equal(fs.readFileSync(path.join(root, ".inline-status-fixture"), "utf8").trim(), "fictional-only");
   assert.ok(["localhost", "127.0.0.1"].includes(new URL(url).hostname));
   const { chromium } = await import("playwright-core");

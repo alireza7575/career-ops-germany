@@ -93,6 +93,18 @@ eq(
   addDays(parseDate('2026-07-02'), DEFAULT_CADENCE.responded_subsequent),
 );
 
+eq(
+  'assessment, no prior follow-up uses responded_initial',
+  computeNextFollowupDate('assessment', APP, null, 0),
+  addDays(parseDate(APP), DEFAULT_CADENCE.responded_initial),
+);
+
+eq(
+  'assessment, with prior follow-up uses responded_subsequent',
+  computeNextFollowupDate('assessment', APP, '2026-07-02', 1),
+  addDays(parseDate('2026-07-02'), DEFAULT_CADENCE.responded_subsequent),
+);
+
 // The initial next-date must not land after the overdue threshold, otherwise a row can be
 // flagged "overdue" (daysSinceApp >= responded_subsequent) while its own next-follow-up
 // date is still in the future, which is impossible for a date meant to trigger "overdue".
@@ -183,7 +195,7 @@ const followupsMd = [
   '| 2 | 1 | 2026-05-20 | Acme | Eng | email | jane | f2 |',
 ].join('\n');
 
-const withFollowups = analyzeFromContent(trackerMd, followupsMd, { scope: 'all' });
+const withFollowups = analyzeFromContent(trackerMd, followupsMd);
 eq(
   'analyzeFromContent classifies app #1 cold after applied_max_followups follow-ups, app #2 stays actionable',
   withFollowups.entries.filter((e) => e.urgency === 'cold').map((e) => e.num),
@@ -193,7 +205,7 @@ eq(
 // Missing/empty follow-ups content must degrade gracefully — no follow-up
 // log means followupCount stays 0 for every row, so nothing can reach the
 // 'cold' threshold. No error, no guessing.
-const noFollowups = analyzeFromContent(trackerMd, '', { scope: 'all' });
+const noFollowups = analyzeFromContent(trackerMd, '');
 eq(
   'analyzeFromContent with no follow-ups content classifies nothing as cold',
   noFollowups.entries.some((e) => e.urgency === 'cold'),
@@ -206,33 +218,14 @@ eq(
   false,
 );
 
-const scopedTracker = [
-  '| # | Date | Company | Role | Score | Status | PDF | Report | Notes |',
-  '|---|------|---------|------|-------|--------|-----|--------|-------|',
-  '| 41 | 2026-05-01 | Applied Co | Eng | 4 | Applied | - | - | - |',
-  '| 42 | 2026-05-01 | Reply Co | Eng | 4 | Responded | - | - | - |',
-  '| 43 | 2026-05-01 | Interview Co | Eng | 4 | Entrevista | - | - | - |',
-].join('\n');
-const scopedHistory = [
-  '| # | App | Date | Company | Role | Channel | Contact | Notes |',
-  '|---|-----|------|---------|------|---------|---------|-------|',
-  '| 1 | 41 | 2026-05-02 | Applied Co | Eng | email | x | sent |',
-  '| 2 | 43 | 2026-05-02 | Interview Co | Eng | email | y | sent |',
-  '- next #41 2026-05-03 (set 2026-05-02)',
-].join('\n');
-eq('all scope keeps every active status', analyzeFromContent(scopedTracker, scopedHistory, { scope: 'all' }).entries.map(e => e.num).sort((a, b) => a - b), [41, 42, 43]);
-const interviewsOnly = analyzeFromContent(scopedTracker, scopedHistory, { scope: 'interviews' });
-eq('interviews scope filters before pins and retains interview history', interviewsOnly.entries.map(e => [e.num, e.followupCount]), [[43, 1]]);
-eq('interviews scope metadata counts only scoped entries', interviewsOnly.metadata.actionable, 1);
-eq('interviews scope uses normalized status aliases', interviewsOnly.entries[0].status, 'interview');
-eq('off scope excludes all entries, including pinned ones', analyzeFromContent(scopedTracker, scopedHistory, { scope: 'off' }).entries, []);
-
 // Hired aliases from templates/states.yml must normalize to 'hired'. Before
 // this, 'Accepted'/'Contratado' normalized to themselves, so stats/funnel/
 // company-history consumers looking for 'hired' silently dropped those rows.
 for (const raw of ['Hired', 'Accepted', 'accept', 'Contratado', 'contratada']) {
   eq(`normalizeStatus('${raw}') canonicalizes to hired`, normalizeStatus(raw), 'hired');
 }
+eq('normalizeStatus(Assessment) canonicalizes to assessment', normalizeStatus('Assessment'), 'assessment');
+eq('normalizeStatus(online screening) canonicalizes to assessment', normalizeStatus('online screening'), 'assessment');
 
 // #2268 — the suite pins the profile so a user's own followup_cadence can't
 // turn a healthy install red. These two guard the pin from the opposite
@@ -246,7 +239,6 @@ eq(
   'a customized profile is still read through profilePath',
   resolveCadenceConfig({ profilePath: CUSTOM_CADENCE_PROFILE, appliedDays: null }),
   {
-    scope: 'interviews',
     applied_first: 3,
     applied_subsequent: 30,
     applied_max_followups: 5,

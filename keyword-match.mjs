@@ -16,7 +16,14 @@
  *                                                         use the tailored CV to
  *                                                         verify the sent document)
  *      node keyword-match.mjs <report-file> --json        (structured JSON)
+ *      node keyword-match.mjs --url <posting-url> [--cv path] [--json]
+ *      node keyword-match.mjs --jd-text <file> [--cv path] [--json]
  *      node keyword-match.mjs --self-test                 (built-in assertions)
+ *      node keyword-match.mjs --help                      (this list, exit 0)
+ *
+ * Exactly one JD source per run: a report path, --url, or --jd-text. URL fetch
+ * uses fetchJdViaKnownApi only (no browser). Thin / unreachable / zero-skill
+ * bodies refuse to score (stderr + exit 1, no coverage on stdout).
  */
 
 import { readFileSync, existsSync, statSync  } from 'fs';
@@ -24,6 +31,15 @@ import { join, isAbsolute, basename } from 'path';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { extractSkills } from './skill-extract.mjs';
+import { collapseMarkdownLinks } from './verify-cv-facts.mjs';
+
+// A normal path stays readable. A space or other shell syntax is quoted so the
+// example stays one argument.
+function shellExampleArg(value) {
+  const text = String(value);
+  if (!/[\s'"$`!*?;&|()<>#{}]/.test(text)) return text;
+  return `'${text.replace(/'/g, "'\\''")}'`;
+}
 
 /**
  * Small, deliberately conservative map of interchangeable ATS surface forms.
@@ -186,6 +202,7 @@ export const KEYWORDS_HEADINGS = [
   'Keywords extracted',             // en, ar, ja — modes/oferta.md, modes/ar/fursah.md, modes/ja/kyujin.md
   'Extracted Keywords',             // en — batch/batch-prompt.md (batch workers)
   'Udtrukne nøgleord',              // da — modes/da/oferta.md
+  'Uttrukne nøkkelord',             // nb — modes/nb/stilling.md
   'Extrahierte Keywords',           // de — modes/de/angebot.md
   'Palabras clave extraídas',       // es — modes/es/oferta.md
   'Mots-cles extraits',             // fr — modes/fr/offre.md
@@ -238,11 +255,91 @@ function isKeywordsHeading(line) {
     title.startsWith(key) && !/^[\p{L}\p{N}]/u.test(title.slice(key.length)));
 }
 
+// CommonMark 0.31.2 §4.1: three or more of the same character, spaces and tabs
+// permitted between them, nothing else on the line.
+const THEMATIC_BREAK_RE = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+// CommonMark 0.31.2 §4.5: a fence is three or more backticks or tildes,
+// indented no more than three spaces. Opened by one, closed by the same
+// character with nothing but whitespace after it.
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+// A list marker on a keyword line: the three ASCII bullets, or an ordered
+// marker's digits and its `.`/`)` (CommonMark §5.2 caps those at nine digits).
+// The digits must be followed by the punctuation AND a space, so `3D modeling`
+// and `Node.js tooling` keep the part a keyword rather than losing their head.
+const BULLET_RE = /^(?:[-*+]|\d{1,9}[.)])\s+/;
+
+// CJK ordered-list markers are written with NO space after them ("1、SQL"), so
+// they cannot be a bullet and are stripped separately. Peeled from the line
+// before splitting rather than dropped after, so the surviving `、` can still do
+// its job as a separator on the rest of the line.
+const CJK_MARKER_RE = /^(?:\d{1,9}|[〇一二三四五六七八九十百千万]+)\s*、\s*/;
+
+// What separates one keyword from the next.
+//
+// ASCII comma plus the three non-Latin list commas. U+00B7 MIDDLE DOT is in
+// the set ONLY when whitespace sits on both sides of it, because Unicode's
+// NamesList records it inside words — a vowel length mark across much of
+// Amerindian orthography, and Catalan writes `col·laboració` — so splitting on
+// the bare character would break real keywords in half. Requiring the spaces
+// keeps those one token and still splits the `SQL · Tableau` shape (#4842).
+const LIST_SEPARATOR_RE = /[,、，،]|\s·\s/;
+
+// Sentence-final punctuation a keyword may carry. The ASCII period was already
+// stripped; these are the marks the CJK and Devanagari lists close a phrase with.
+const TRAILING_PUNCT_RE = /[.。．।]+$/;
+const TRAILING_BACKTICKS_RE = /`+$/;
+const STARTING_BACKTICKS_RE = /^`+/;
+
+// The line a fence opened at `start` closes on, or -1 when it never closes.
+// A closer carries the same character, is AT LEAST as long as the opener, and
+// has nothing but whitespace after it (CommonMark 0.31.2 §4.5). The length test
+// is what keeps a shorter run of the same character — common inside a block
+// that quotes code — from closing the fence early and letting the rest of the
+// report leak into the keyword list.
+//
+// `indented` decides how the closer is matched, and it is the whole subtlety
+// (found by CodeRabbit on #5362). A fence indented four or more spaces is an
+// INDENTED CODE BLOCK (§4.9), not a fence, so matching the closer on a trimmed
+// line made any indented run of the same character close a real fence early —
+// and a `## ` heading after it then dropped out of the keyword list silently.
+//
+// But the two cases cannot both be served by one rule, because an indented
+// code block's own closing delimiter is indented too:
+//
+//   ```            <- real fence (0-3 spaces): closer must be 0-3 spaces
+//   SQL
+//     ```          <- indented code block delimiter, NOT a closer
+//   ## not a heading
+//
+//   ```            <- real fence
+//     SQL          <- indented code block: its closer is indented as well
+//     ```
+//
+// So the closer is matched on the same basis as the opener was: untrimmed when
+// the opener sat in the fence's own indentation range, trimmed when the opener
+// only matched after trimming (the indented-code-block case, where reading the
+// delimiters as fences is what lets the contents through at all).
+function indexOfFenceClose(lines, start, open, indented) {
+  for (let i = start + 1; i < lines.length; i++) {
+    const m = FENCE_RE.exec(indented ? lines[i].trim() : lines[i]);
+    if (m && m[1][0] === open[0] && m[1].length >= open.length && !m[2].trim()) return i;
+  }
+  return -1;
+}
+
 /**
  * Pull keywords out of a report's keyword section, opened by any heading in
  * KEYWORDS_HEADINGS. Liberal: accepts bulleted, comma-separated, or
  * one-per-line entries; stops at the next level-2 heading; skips an
  * empty/placeholder parenthetical line. Returns [] if the block is absent.
+ *
+ * The list shape is whatever the agent that wrote the report chose, so this
+ * reads the shapes that actually turn up (#4842): the ASCII comma, the CJK and
+ * Arabic list commas, a spaced middle dot, ordered-list markers, a thematic
+ * break, and a fenced code block. A fenced block is content rather than
+ * structure — the delimiters are skipped and the lines between them are still
+ * read — so a `## ` line inside the fence cannot close the section early.
  *
  * @param {string} reportText - Full report markdown.
  * @returns {string[]} Extracted keywords in order.
@@ -251,18 +348,64 @@ export function extractKeywords(reportText) {
   const lines = String(reportText || '').split(/\r?\n/);
   const out = [];
   let inBlock = false;
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
+
+  const collect = (line) => {
+    if (!line || /^\(.*\)$/.test(line)) return;
+    // Tested before BULLET_RE, or `- - -` would lose its first `- ` and become
+    // the keyword "- -". Checked here rather than at the call site so a
+    // thematic break inside a fenced list is skipped on the same terms as one
+    // outside it — both are a keyword list an agent wrote, not a separator.
+    if (THEMATIC_BREAK_RE.test(line)) return;
+    const body = line.replace(BULLET_RE, '').replace(CJK_MARKER_RE, '');
+    for (const part of body.split(LIST_SEPARATOR_RE)) {
+      let kw = part.trim();
+      let previous;
+      do {
+        previous = kw;
+        kw = kw
+          .replace(STARTING_BACKTICKS_RE, '')
+          .replace(TRAILING_BACKTICKS_RE, '')
+          .replace(TRAILING_PUNCT_RE, '')
+          .trim();
+      } while (kw !== previous);
+      if (kw) out.push(kw);
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
     if (isKeywordsHeading(line)) { inBlock = true; continue; }
     if (!inBlock) continue;
     if (/^##\s+/.test(line)) break;
-    if (!line) continue;
-    if (/^\(.*\)$/.test(line)) continue;
-    const body = line.replace(/^[-*]\s+/, '');
-    for (const part of body.split(',')) {
-      const kw = part.trim().replace(/\.+$/, '').trim();
-      if (kw) out.push(kw);
+
+    // Tested on the trimmed line so a `- - -` rule indented inside a fenced
+    // list is recognised the same as one at the margin.
+    if (THEMATIC_BREAK_RE.test(line)) continue;
+
+    // A delimiter that matches on the RAW line sits in the fence's own 0-3
+    // space range, so its closer must too. One that only matches after trimming
+    // is an indented code block, whose closer is indented as well.
+    const marker = FENCE_RE.exec(line);
+    if (marker) {
+      if (/^`{3,}.+`{3,}$/.test(line)) {
+        collect(line);
+        continue;
+      }
+
+      // The closer is looked up rather than tracked forward, so a fence the
+      // report never closes cannot swallow every section after it: with no
+      // closer the opener is skipped and the section still ends at
+      // the next heading, as it did before.
+      const close = indexOfFenceClose(lines, i, marker[1], !FENCE_RE.test(lines[i]));
+      if (close > i) {
+        for (let k = i + 1; k < close; k++) collect(lines[k].trim());
+        i = close;
+        continue;
+      }
+      continue;
     }
+
+    collect(line);
   }
   return out;
 }
@@ -296,14 +439,42 @@ export function archivedJdText(reportText, root) {
  * @param {string} html - HTML source.
  * @returns {string} Visible text.
  */
+function stripRawElement(html, tag) {
+  const lower = html.toLowerCase();
+  const open = `<${tag}`;
+  const close = `</${tag}`;
+  let from = 0;
+  let result = '';
+  while (true) {
+    const start = lower.indexOf(open, from);
+    if (start < 0) return result + html.slice(from);
+    const boundary = lower[start + open.length];
+    if (boundary && !/[\s/>]/.test(boundary)) {
+      result += html.slice(from, start + open.length);
+      from = start + open.length;
+      continue;
+    }
+    const endOfOpen = lower.indexOf('>', start + open.length);
+    if (endOfOpen < 0) return result + html.slice(from);
+    let search = endOfOpen + 1;
+    let end = -1;
+    while (end < 0) {
+      const endOfBody = lower.indexOf(close, search);
+      if (endOfBody < 0) return result + html.slice(from);
+      const afterTag = endOfBody + close.length;
+      if (/[\s/>]/.test(lower[afterTag] || '')) {
+        end = lower.indexOf('>', afterTag);
+        if (end < 0) return result + html.slice(from);
+      } else search = afterTag;
+    }
+    result += html.slice(from, start) + ' ';
+    from = end + 1;
+  }
+}
+
 export function htmlToText(html) {
-  return String(html || '')
-    // Strip comments first so a comment can't shelter a tag from the strips below.
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    // Match the full opening tag (incl. attributes) before the lazy body, and
-    // tolerate whitespace in the closing tag — a stricter filter CodeQL accepts.
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, ' ')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, ' ')
+  const noComments = String(html || '').replace(/<!--[\s\S]*?-->/g, ' ');
+  return stripRawElement(stripRawElement(noComments, 'script'), 'style')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&lt;/gi, '<')
@@ -348,6 +519,348 @@ export function formatCoverageMarkdown(result, sourceLabel, keywordNote) {
   return out.join('\n');
 }
 
+// Same caps as fetch-jd.mjs.
+const TEXT_CAP = 20_000;
+const TIMEOUT_MS = 15_000;
+
+const USAGE =
+  'Usage: node keyword-match.mjs <report-file> | --url <posting-url> | --jd-text <file> [--cv <path>] [--json]';
+
+const MIXED_SOURCES =
+  'use exactly one of <report>, --url, --jd-text';
+
+const REFUSE_BETTER_SOURCE =
+  'Provide a better link, or pass --jd-text <file> with the pasted description.';
+
+/**
+ * @typedef {{ kind: 'report', reportPath: string }
+ *   | { kind: 'url', url: string }
+ *   | { kind: 'jd-text', textPath: string }} MatchInput
+ */
+
+/**
+ * @typedef {'report' | 'archived-jd' | 'url' | 'jd-text'} KeywordSource
+ */
+
+/**
+ * @typedef {{ ok: true, text: string, title: string | null, ats: string | null }
+ *   | { ok: false, code: 'fetch-miss' | 'insufficient' | 'unavailable' | 'empty-input',
+ *       message: string, url?: string }} JdBody
+ */
+
+/**
+ * @typedef {{
+ *   input: MatchInput | null,
+ *   cvPath: string | null,
+ *   jsonMode: boolean,
+ *   selfTest: boolean,
+ * }} CliArgs
+ */
+
+/**
+ * @param {string} jdText
+ * @returns {string[]}
+ */
+export function keywordsFromJdText(jdText) {
+  return [...extractSkills(jdText)].sort();
+}
+
+/**
+ * @param {string} url
+ * @param {null | { text: string, title?: string, ats?: string }} fetchResult
+ * @param {{ code: string, error?: string } | null} [failure]
+ * @returns {JdBody}
+ */
+export function gateUrlJdResult(url, fetchResult, failure = null) {
+  if (!fetchResult) {
+    return {
+      ok: false,
+      code: 'fetch-miss',
+      url,
+      message:
+        'Could not read JD text from that link via a known ATS API. ' +
+        'Provide a direct posting URL that serves JD text, or pass --jd-text <file>.',
+    };
+  }
+  if (failure) {
+    if (failure.code === 'unavailable') {
+      return {
+        ok: false,
+        code: 'unavailable',
+        url,
+        message: `Posting looks unavailable (${failure.error}).`,
+      };
+    }
+    return {
+      ok: false,
+      code: 'insufficient',
+      url,
+      message: `JD text from ${url} is too thin to score (${failure.error}). ${REFUSE_BETTER_SOURCE}`,
+    };
+  }
+  return {
+    ok: true,
+    text: fetchResult.text,
+    title: fetchResult.title || null,
+    ats: fetchResult.ats || null,
+  };
+}
+
+/**
+ * Fetch JD body for a posting URL through the shared known-API dispatcher.
+ * Applies the same sufficiency floor as jd mode (jdFailure). Never opens a browser.
+ *
+ * @param {string} url
+ * @param {{ textCap?: number, timeoutMs?: number }} [opts]
+ * @returns {Promise<JdBody>}
+ */
+export async function resolveUrlJdBody(url, { textCap = TEXT_CAP, timeoutMs = TIMEOUT_MS } = {}) {
+  // Dynamic import: browser-extract pulls Playwright via liveness-browser.
+  const { fetchJdViaKnownApi, jdFailure } = await import('./browser-extract.mjs');
+  const result = await fetchJdViaKnownApi(url, textCap, timeoutMs);
+  const failure = result ? jdFailure(result, textCap) : null;
+  return gateUrlJdResult(url, result, failure);
+}
+
+/**
+ * Load --jd-text from a file and apply the same char floor via jdFailure.
+ *
+ * @param {string} textPath
+ * @param {{ textCap?: number }} [opts]
+ * @returns {Promise<JdBody>}
+ */
+export async function resolveJdTextFile(textPath, { textCap = TEXT_CAP } = {}) {
+  if (!existsSync(textPath) || !statSync(textPath).isFile()) {
+    return {
+      ok: false,
+      code: 'empty-input',
+      message: `JD text file not found: ${textPath}`,
+    };
+  }
+  let text;
+  try {
+    text = readFileSync(textPath, 'utf-8');
+  } catch {
+    return {
+      ok: false,
+      code: 'empty-input',
+      message: `Unable to read JD text file: ${textPath}`,
+    };
+  }
+  if (!String(text).trim()) {
+    return {
+      ok: false,
+      code: 'empty-input',
+      message: `JD text file is empty: ${textPath}`,
+    };
+  }
+  const { jdFailure } = await import('./browser-extract.mjs');
+  const synthetic = { url: textPath, text, bodyText: text, title: '' };
+  return gateUrlJdResult(textPath, synthetic, jdFailure(synthetic, textCap));
+}
+
+/**
+ * @param {string} flag
+ * @param {string[]} argv
+ * @param {number} i
+ * @returns {{ value: string, next: number }}
+ */
+function takeFlagValue(flag, argv, i) {
+  const a = argv[i];
+  const eq = a.indexOf('=');
+  if (eq !== -1) {
+    const value = a.slice(eq + 1);
+    if (!value) throw new Error(`Missing value for ${flag}`);
+    return { value, next: i };
+  }
+  const next = argv[i + 1];
+  if (!next || next.startsWith('--')) throw new Error(`Missing value for ${flag}`);
+  return { value: next, next: i + 1 };
+}
+
+/**
+ * @param {string[]} argv
+ * @returns {CliArgs}
+ */
+export function parseMatchArgs(argv) {
+  let jsonMode = false;
+  let cvPath = null;
+  let selfTest = false;
+  let reportPath = null;
+  let url = null;
+  let jdTextPath = null;
+
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--self-test') {
+      selfTest = true;
+      continue;
+    }
+    if (a === '--json') {
+      jsonMode = true;
+      continue;
+    }
+    if (a === '--cv' || a.startsWith('--cv=')) {
+      const got = takeFlagValue('--cv', argv, i);
+      cvPath = got.value;
+      i = got.next;
+      continue;
+    }
+    if (a === '--url' || a.startsWith('--url=')) {
+      const got = takeFlagValue('--url', argv, i);
+      if (url !== null) throw new Error(MIXED_SOURCES);
+      url = got.value;
+      i = got.next;
+      continue;
+    }
+    if (a === '--jd-text' || a.startsWith('--jd-text=')) {
+      const got = takeFlagValue('--jd-text', argv, i);
+      if (jdTextPath !== null) throw new Error(MIXED_SOURCES);
+      jdTextPath = got.value;
+      i = got.next;
+      continue;
+    }
+    if (a.startsWith('--')) throw new Error(`Unknown option: ${a}`);
+    if (reportPath !== null) throw new Error(`Unexpected argument: ${a}`);
+    reportPath = a;
+  }
+
+  const sourceCount = [reportPath, url, jdTextPath].filter((v) => v != null).length;
+  if (!selfTest) {
+    if (sourceCount > 1) throw new Error(MIXED_SOURCES);
+    if (sourceCount === 0) throw new Error(USAGE);
+  }
+
+  /** @type {MatchInput | null} */
+  let input = null;
+  if (reportPath != null) input = { kind: 'report', reportPath };
+  else if (url != null) input = { kind: 'url', url };
+  else if (jdTextPath != null) input = { kind: 'jd-text', textPath: jdTextPath };
+
+  return { input, cvPath, jsonMode, selfTest };
+}
+
+/**
+ * @param {string} sourceLabel
+ * @returns {never}
+ */
+function refuseNoSkills(sourceLabel) {
+  console.error(`No known skills found in JD text from ${sourceLabel}. ${REFUSE_BETTER_SOURCE}`);
+  process.exit(1);
+}
+
+/**
+ * A relative report, CV or JD-text path, resolved the way the modes write it.
+ * The modes pass `reports/{###}-….md` and `jds/{slug}.md` relative to the data
+ * root, which is not the process's working directory when the user layer lives
+ * elsewhere (a `.career-ops-data` marker or CAREER_OPS_ROOT).
+ *
+ * A bare relative path therefore always means the data root, whether or not
+ * the file is there. Falling back to the working directory when the data root
+ * lacks the file would score a stale copy left in the checkout (say, from
+ * before the user layer moved out) instead of saying the report is missing.
+ * A path that starts with `./` or `../` names the working directory on
+ * purpose, so it resolves there. With no data root, the working directory is
+ * used, as before.
+ *
+ * @param {string} arg
+ * @param {string} root
+ * @returns {string}
+ */
+export function resolveUserPath(arg, root) {
+  if (isAbsolute(arg)) return arg;
+  if (!root || /^\.\.?(?:[\\/]|$)/.test(arg)) return join(process.cwd(), arg);
+  return join(root, arg);
+}
+
+/**
+ * Resolve keywords + provenance for any MatchInput.
+ *
+ * @param {MatchInput} input
+ * @param {string} root
+ * @returns {Promise<{ keywords: string[], keywordSource: KeywordSource,
+ *                     keywordNote: string | null, sourceUrl?: string,
+ *                     reportArg?: string }>}
+ */
+export async function resolveKeywords(input, root) {
+  if (input.kind === 'url') {
+    const body = await resolveUrlJdBody(input.url);
+    if (!body.ok) {
+      console.error(body.message);
+      process.exit(1);
+    }
+    const keywords = keywordsFromJdText(body.text);
+    if (!keywords.length) refuseNoSkills(input.url);
+    return {
+      keywords,
+      keywordSource: 'url',
+      keywordNote:
+        `Keywords: ${keywords.length} taken from the posting JD text (skill vocabulary).`,
+      sourceUrl: input.url,
+    };
+  }
+
+  if (input.kind === 'jd-text') {
+    const textPath = resolveUserPath(input.textPath, root);
+    const body = await resolveJdTextFile(textPath);
+    if (!body.ok) {
+      console.error(body.message);
+      process.exit(1);
+    }
+    const keywords = keywordsFromJdText(body.text);
+    if (!keywords.length) refuseNoSkills(textPath);
+    return {
+      keywords,
+      keywordSource: 'jd-text',
+      keywordNote:
+        `Keywords: ${keywords.length} taken from pasted JD text (skill vocabulary).`,
+    };
+  }
+
+  const reportArg = input.reportPath;
+  const reportPath = resolveUserPath(reportArg, root);
+  if (!existsSync(reportPath) || !statSync(reportPath).isFile()) {
+    console.error(`Report not found: ${reportArg} (looked for ${reportPath}).`);
+    if (!isAbsolute(reportArg) && !/^\.\.?(?:[\\/]|$)/.test(reportArg)) {
+      console.error(`A relative path is read from the data root. For a file in the current directory, pass ./${reportArg}.`);
+    }
+    console.error(`Example: node keyword-match.mjs ${shellExampleArg(join(getCareerOpsRoot(), 'reports', '001-role.md'))}`);
+    process.exit(1);
+  }
+
+  let reportText;
+  try {
+    reportText = readFileSync(reportPath, 'utf-8');
+  } catch {
+    console.error(`Unable to read report: ${reportArg}`);
+    process.exit(1);
+  }
+
+  let keywords = extractKeywords(reportText);
+  /** @type {KeywordSource} */
+  let keywordSource = 'report';
+  let keywordNote = null;
+
+  if (keywords.length === 0) {
+    keywords = keywordsFromJdText(archivedJdText(reportText, root));
+    if (keywords.length === 0) {
+      console.error(
+        'No "## Keywords extracted" block found (or it is empty), and no known skills were found under ' +
+        '"## Job Description (archived verbatim)". Add the 15-20 keyword section to the report and rerun.');
+      process.exit(1);
+    }
+    keywordSource = 'archived-jd';
+    keywordNote =
+      `Keywords: ${keywords.length} taken from the archived job description, because the report has no ` +
+      'keyword section. Only names in the skill vocabulary are found, so add the 15-20 keyword section to the report.';
+    console.error(
+      `⚠️  ${reportArg} has no "## Keywords extracted" section. Scoring ${keywords.length} skills read from the archived ` +
+      'job description instead. Tell the user, and add the keyword section to the report.');
+  }
+
+  return { keywords, keywordSource, keywordNote, reportArg };
+}
+
 /**
  * Built-in deterministic assertions (no I/O, no network). Exits 0 on success,
  * 1 on failure. Used by CI via `node keyword-match.mjs --self-test`.
@@ -379,6 +892,43 @@ function runSelfTest() {
   if (htmlToText('<style>.x{}</style><p>Python &amp; <b>gRPC</b></p>') !== 'Python & gRPC') {
     failures.push('htmlToText strip/decode');
   }
+  if (htmlToText('<script type="text/javascript">hidden</script   ><style>secret</style><p>Visible</p>') !== 'Visible') {
+    failures.push('htmlToText script/style bodies');
+  }
+  if (htmlToText('<script>hidden</script-no>still hidden</script><p>Visible</p>') !== 'Visible') {
+    failures.push('htmlToText malformed closing tag');
+  }
+  if (htmlToText('<script>hidden</script\t\n bar><p>Visible</p>') !== 'Visible') {
+    failures.push('htmlToText closing tag with attributes');
+  }
+
+  const fromJd = keywordsFromJdText('Experience with Python and Docker required.');
+  if (!fromJd.includes('Python') || !fromJd.includes('Docker')) {
+    failures.push('keywordsFromJdText misses known skills');
+  }
+  if (JSON.stringify(fromJd) !== JSON.stringify([...fromJd].sort())) {
+    failures.push('keywordsFromJdText must sort');
+  }
+
+  const thinGate = gateUrlJdResult(
+    'https://example.com/jobs/1',
+    { text: 'x', title: '' },
+    { code: 'empty_text', error: 'extracted 1 chars of JD text (minimum 200)' },
+  );
+  if (thinGate.ok || thinGate.code !== 'insufficient') failures.push('gateUrlJdResult must refuse thin body');
+  if (!thinGate.ok && /ashby|greenhouse|lever/i.test(thinGate.message)) {
+    failures.push('gate refuse copy must stay vendor-agnostic');
+  }
+
+  const nullGate = gateUrlJdResult('https://example.com/jobs/1', null, null);
+  if (nullGate.ok || nullGate.code !== 'fetch-miss') failures.push('gateUrlJdResult must refuse null fetch');
+
+  try {
+    parseMatchArgs(['report.md', '--url', 'https://example.com/j']);
+    failures.push('parseMatchArgs must reject mixed sources');
+  } catch (err) {
+    if (!/exactly one/i.test(err?.message || '')) failures.push('parseMatchArgs mixed-source message');
+  }
 
   if (failures.length) {
     console.error(`keyword-match self-test FAILED: ${failures.join('; ')}`);
@@ -388,109 +938,72 @@ function runSelfTest() {
   process.exit(0);
 }
 
-// --- CLI (guarded so importing this module never runs it) ---
-if (isMainModule(import.meta.url)) {
-  const args = process.argv.slice(2);
-
-  if (args.includes('--self-test')) {
+/**
+ * @param {CliArgs} args
+ * @returns {Promise<void>}
+ */
+async function runKeywordMatch(args) {
+  if (args.selfTest) {
     runSelfTest();
-  } else {
-    let jsonMode = false;
-    let cvArg = null;
-    let reportArg = null;
-    for (let i = 0; i < args.length; i++) {
-      const a = args[i];
-
-      if (a === '--json') {
-        jsonMode = true;
-      } 
-      else if (a === '--cv') {
-        const next = args[i + 1];
-
-        if (!next || next.startsWith('--')) {
-          console.error('Missing value for --cv');
-          process.exit(1);
-        }
-
-        cvArg = next;
-        i++;
-      } 
-      else if (a.startsWith('--')) {
-        console.error(`Unknown option: ${a}`);
-        process.exit(1);
-      }
-      else if (reportArg === null) {
-        reportArg = a;
-      }
-      else {
-        console.error(`Unexpected argument: ${a}`);
-        process.exit(1);
-      }
-    }
-
-    if (!reportArg) {
-      console.error('Usage: node keyword-match.mjs <report-file> [--cv <path>] [--json]');
-      process.exit(1);
-    }
-
-    const reportPath = isAbsolute(reportArg) ? reportArg : join(process.cwd(), reportArg);
-
-    if (!existsSync(reportPath) || !statSync(reportPath).isFile()) {
-      console.error(`Report not found: ${reportArg}`);
-      process.exit(1);
-    }
-
-    let reportText;
-    try {
-      reportText = readFileSync(reportPath, 'utf-8');
-    } catch {
-      console.error(`Unable to read report: ${reportArg}`);
-      process.exit(1);
-    }
-
-    let keywords = extractKeywords(reportText);
-    let keywordSource = 'report';
-    let keywordNote = null;
-
-    if (keywords.length === 0) {
-      keywords = [...extractSkills(archivedJdText(reportText, getCareerOpsRoot()))].sort();
-      if (keywords.length === 0) {
-        console.error(
-          'No "## Keywords extracted" block found (or it is empty), and no known skills were found under ' +
-          '"## Job Description (archived verbatim)". Add the 15-20 keyword section to the report and rerun.');
-        process.exit(1);
-      }
-      keywordSource = 'archived-jd';
-      keywordNote =
-        `Keywords: ${keywords.length} taken from the archived job description, because the report has no ` +
-        'keyword section. Only names in the skill vocabulary are found, so add the 15-20 keyword section to the report.';
-      console.error(
-        `⚠️  ${reportArg} has no "## Keywords extracted" section. Scoring ${keywords.length} skills read from the archived ` +
-        'job description instead. Tell the user, and add the keyword section to the report.');
-    }
-
-    const cvPath = cvArg
-      ? (isAbsolute(cvArg) ? cvArg : join(process.cwd(), cvArg))
-      : join(getCareerOpsRoot(), 'cv.md');
-
-    if (!existsSync(cvPath) || !statSync(cvPath).isFile()) {
-      console.error(`CV not found: ${cvPath}. Pass --cv <path> to point at your CV.`);
-      process.exit(1);
-    }
-
-    let rawCv;
-    try {
-      rawCv = readFileSync(cvPath, 'utf-8');
-    } catch {
-      console.error(`Unable to read CV: ${cvPath}`);
-      process.exit(1);
-    }
-    const cvText = /\.html?$/i.test(cvPath) ? htmlToText(rawCv) : rawCv;
-    const sourceLabel = cvArg ? basename(cvPath) : 'cv.md (base CV, before per-role tailoring)';
-
-    const result = analyzeCoverage(keywords, cvText);
-    console.log(jsonMode
-      ? JSON.stringify({ ...result, keywordSource }, null, 2)
-      : formatCoverageMarkdown(result, sourceLabel, keywordNote));
+    return;
   }
+  if (!args.input) {
+    console.error(USAGE);
+    process.exit(1);
+  }
+
+  const resolved = await resolveKeywords(args.input, getCareerOpsRoot());
+  const { keywords, keywordSource, keywordNote, sourceUrl } = resolved;
+
+  const cvArg = args.cvPath;
+  const cvPath = cvArg
+    ? resolveUserPath(cvArg, getCareerOpsRoot())
+    : join(getCareerOpsRoot(), 'cv.md');
+
+  if (!existsSync(cvPath) || !statSync(cvPath).isFile()) {
+    console.error(`CV not found: ${cvPath}. Pass --cv <path> to point at your CV.`);
+    process.exit(1);
+  }
+
+  let rawCv;
+  try {
+    rawCv = readFileSync(cvPath, 'utf-8');
+  } catch {
+    console.error(`Unable to read CV: ${cvPath}`);
+    process.exit(1);
+  }
+  // The words a reader sees. htmlToText() already drops an HTML CV's hrefs; a
+  // markdown CV kept its link targets, so "[modules](https://…/terraform-modules)"
+  // counted Terraform as present in cv.md and missing in the same CV as HTML.
+  const cvText = /\.html?$/i.test(cvPath) ? htmlToText(rawCv) : collapseMarkdownLinks(rawCv);
+  const sourceLabel = cvArg ? basename(cvPath) : 'cv.md (base CV, before per-role tailoring)';
+
+  const result = analyzeCoverage(keywords, cvText);
+  const payload = {
+    ...result,
+    keywordSource,
+    ...(sourceUrl ? { sourceUrl } : {}),
+  };
+  console.log(args.jsonMode
+    ? JSON.stringify(payload, null, 2)
+    : formatCoverageMarkdown(result, sourceLabel, keywordNote));
+}
+
+if (isMainModule(import.meta.url)) {
+  const argv = process.argv.slice(2);
+  if (argv.includes('--help') || argv.includes('-h')) {
+    console.log(USAGE);
+    process.exit(0);
+  }
+  let args;
+  try {
+    args = parseMatchArgs(argv);
+  } catch (err) {
+    console.error(err?.message || err);
+    process.exit(1);
+  }
+  runKeywordMatch(args).catch((err) => {
+    console.error(`keyword-match: unexpected error — ${err?.message || err}`);
+    process.exit(1);
+  });
 }

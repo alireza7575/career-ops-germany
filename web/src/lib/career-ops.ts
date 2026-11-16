@@ -5,6 +5,7 @@ import { atomicWrite } from "@/lib/core/safe-write";
 import { resolveDataRoot } from "@/lib/core/data-root.mjs";
 import { readTrackerFile } from "@/lib/core/tracker-files.mjs";
 import { resolveCodeRoot, resolveRootScript } from "@/lib/core/code-root.mjs";
+import { getProfilePath } from "@/lib/core/profile-path.mjs";
 import { parseApplications } from "@/lib/tracker-table.mjs";
 import { parseStatusLog } from "@/lib/pipeline-sankey.mjs";
 // Pipeline rows are parsed in a plain .mjs for the same reason as
@@ -138,6 +139,8 @@ export type Application = {
   status: string;
   pdf: string;
   report: string;
+  /** Posting URL from the tracker URL column, with markdown link syntax removed. */
+  url: string;
   /** Tracker's `Apply Link` column — usually a markdown link to the original ad; "" when the column is absent. */
   applyLink: string;
   /** Tracker's `Follow-up` column — a date or "—"; "" when the column is absent. */
@@ -297,7 +300,7 @@ export function doctorState(snapshot?: Pick<PipelineSummary, "applications" | "i
     ["modes/_profile.md", "modes/_profile.md"],
     ["portals.yml", "portals.yml"],
   ];
-  const missing = prereqs.filter(([rel]) => !has(rel)).map(([, label]) => label);
+  const missing = prereqs.filter(([rel, label]) => !(label === "config/profile.yml" ? fs.existsSync(getProfilePath(careerOpsRoot())) : has(rel))).map(([, label]) => label);
   const hasCv = has("cv.md");
   // Home already reads these files. Reuse that snapshot so its setup check
   // neither parses the tracker twice nor disagrees with the rendered queue.
@@ -525,7 +528,7 @@ const MODES_DIR_RE = /^modes(?:\/[A-Za-z0-9_-]+)?$/;
  * Verified against every market directory in the repo: each contains exactly
  * one file whose title line matches, and no apply-mode collides.
  */
-const EVAL_MODE_TITLE_RE = /A[-\u2010-\u2015][FG]/;
+const EVAL_MODE_TITLE_RE = /A[-\u2010-\u2015][FGH]/;
 
 const DEFAULT_EVAL_MODE = "modes/oferta.md";
 
@@ -566,7 +569,7 @@ export function readLanguageConfig(): LanguageConfig {
   let modesDirs = ["modes/de"];
   let output = "en";
   try {
-    const parsed = yaml.load(fs.readFileSync(path.join(root, "config", "profile.yml"), "utf8"));
+    const parsed = yaml.load(fs.readFileSync(getProfilePath(root), "utf8"));
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       const language = (parsed as Record<string, unknown>).language;
       if (language && typeof language === "object" && !Array.isArray(language)) {

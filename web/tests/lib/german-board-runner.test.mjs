@@ -13,6 +13,9 @@ test("Arbeitnow reports a capped raw feed even when no titles match", () => {
   try {
     fs.mkdirSync(path.join(dir, "providers"));
     fs.copyFileSync(new URL("../../../providers/arbeitnow.mjs", import.meta.url), path.join(dir, "providers", "arbeitnow.mjs"));
+    for (const name of ["_html-to-text.mjs", "_html-entities.mjs", "_html-entity-table.mjs"]) {
+      fs.copyFileSync(new URL(`../../../providers/${name}`, import.meta.url), path.join(dir, "providers", name));
+    }
     fs.writeFileSync(path.join(dir, "providers", "_http.mjs"), `export const makeHttpCtx = () => ({ fetchJson: async () => ({
       data: Array.from({ length: 100 }, (_, i) => ({ title: "Designer", url: "https://www.arbeitnow.com/view/" + i })),
       links: { next: "https://www.arbeitnow.com/api/job-board-api?page=3" }

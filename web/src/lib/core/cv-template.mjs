@@ -1,6 +1,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { BASE_CV_TEMPLATE } from "../run-prompts.mjs";
+import { getProfilePath } from "./profile-path.mjs";
 
 /**
  * ACL for the core's CV-template resolver (cv-templates.mjs), so a dashboard pdf
@@ -47,12 +48,11 @@ export async function resolveCvTemplate(root, codeRoot = root) {
   try {
     const mod = await import(/* webpackIgnore: true */ pathToFileURL(file).href);
     if (typeof mod?.resolveTemplate !== "function") return BASE_CV_TEMPLATE;
-    const profile = process.env.CAREER_OPS_PROFILE?.trim();
     const abs = mod.resolveTemplate("cv", null, {
       fallback: true,
       // Resolve the user's profile explicitly; the core's module default was
       // captured at import time and can point at a different data root.
-      profilePath: profile ? path.resolve(root, profile) : path.join(root, "config", "profile.yml"),
+      profilePath: getProfilePath(root),
     });
     if (typeof abs !== "string" || !abs) return BASE_CV_TEMPLATE;
     // The prompt names a repo-relative path, and always with forward slashes:

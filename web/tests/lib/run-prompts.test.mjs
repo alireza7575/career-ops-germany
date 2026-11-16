@@ -159,104 +159,24 @@ test("isShellSafeCompanyName: refuses anything that could close the quote", () =
   assert.equal(isShellSafeCompanyName(undefined), false);
 });
 
-// ── the tracker-additions TSV row (#1298, #3517) ────────────────────────────
-//
-// The web is a WRITER of batch/tracker-additions/*.tsv, not just a reader of the
-// tracker. merge-tracker accepts 9 fields forever, and accepts HEADERLESS files
-// forever, so a stale template can never go red — it just silently leaves every
-// web-evaluated job out of the URL dedup, and on the ingest path where score and
-// status have to be told apart by content. Nothing else in this repo can catch
-// that, which is why it is asserted here.
-
-/** The two example lines the evaluate prompt tells the agent to write. */
-function exampleTsvLines(prompt) {
-  const lines = prompt.split("\n").filter((l) => l.includes("\t"));
-  assert.equal(lines.length, 2, `the evaluate prompt must show a header line and one data line, got ${lines.length}`);
-  return { header: lines[0].trim().split("\t"), fields: lines[1].trim().split("\t") };
-}
-
-/** The example DATA row the evaluate prompt tells the agent to append. */
-function exampleTsvRow(prompt) {
-  return exampleTsvLines(prompt).fields;
-}
-
-test("buildPrompt: the evaluate prompt's TSV row carries all 10 fields, url last", () => {
-  // Given an evaluate run
-  const prompt = buildPrompt({ kind: "evaluate", input: "https://acme.com/jobs/7", memory: "", today: "2026-08-04" });
-  const fields = exampleTsvRow(prompt);
-
-  // Then the row has the 10 fields merge-tracker reads, with the posting URL last
-  assert.equal(fields.length, 10, `expected 10 tab-separated fields, got ${fields.length}: ${JSON.stringify(fields)}`);
-  assert.match(fields[9], /posting URL/i, "the 10th field must be the posting URL");
-  // ...and the prose agrees, so the agent is not told "9" while shown 10
-  assert.match(prompt, /10 TAB-separated columns/);
+// The worker emits a report; the platform builds the tracker row and metadata.
+test("buildPrompt: evaluation emits one complete report envelope and no write command", () => {
+  const prompt = buildPrompt({ kind: "evaluate", input: "https://acme.com/jobs/7", jdText: "Full job text", memory: "", today: "2026-08-04" });
+  assert.match(prompt, /<<report-md>>/);
+  assert.match(prompt, /<<\/report-md>>/);
+  assert.match(prompt, /Do NOT save or edit any file/);
+  assert.doesNotMatch(prompt, /run `node .*reserve-report-num|Write .*tracker-additions/);
+  assert.match(prompt, /BEGIN UNTRUSTED POSTING DATA\nFull job text\nEND UNTRUSTED POSTING DATA/);
 });
 
-test("buildPrompt: the evaluate prompt shows a header row, labelled for merge-tracker (#3517)", () => {
-  // Given the header is what lets merge-tracker resolve fields by NAME instead
-  // of telling score from status by content — a discrimination with an
-  // undecidable case (`—` is both a score sentinel and a status)
-  const prompt = buildPrompt({ kind: "evaluate", input: "https://acme.com/jobs/7", memory: "", today: "2026-08-04" });
-  const { header, fields } = exampleTsvLines(prompt);
-
-  // Then the labels are the ones tracker-aliases.json knows, in step with the
-  // data row beneath them. These are lowercase canonical names on purpose: the
-  // alias table is matched case-insensitively, but an agent copies what it sees.
-  assert.deepEqual(header, [
-    "num", "date", "company", "role", "status", "score", "pdf", "report", "notes", "url",
-  ]);
-  assert.equal(header.length, fields.length, "header and data row must have the same field count");
-  // ...and the prose tells the agent to write BOTH lines, since a data row alone
-  // is still accepted and would silently fall back to the content-sniffing path
-  assert.match(prompt, /HEADER row/);
-  assert.match(prompt, /resolves every field by NAME/i);
-});
-
-test("buildPrompt: the evaluate prompt demands an EMPTY url field, never a placeholder", () => {
-  // Given merge-tracker's parseTsvExtras drops "N/A"/"-" precisely so they can't
-  // be misread as the row's LOCATION, and an unconditional template is one an
-  // agent actually follows
-  const prompt = buildPrompt({ kind: "evaluate", input: "https://acme.com/jobs/7", memory: "", today: "2026-08-04" });
-
-  // Then the instruction says to write all 10 fields and leave the last empty
-  assert.match(prompt, /ALWAYS write all 10 fields/i);
-  assert.match(prompt, /EMPTY if there is no posting URL/i);
-  assert.match(prompt, /never "N\/A"/i);
-});
-
-// ── the posted: segment (#2692) ─────────────────────────────────────────────
-//
-// The dashboard's POSTED column parses this out of the tracker's Notes cell.
-// The date is interpolated by the server from what the scanner recorded, never
-// requested from the agent: modes/oferta.md is explicit that a guessed date is
-// worse than an absent one, because the column renders absent as `—` and would
-// render an invented one as a fresh requisition.
-
-test("buildPrompt: a known posting date becomes its own trailing segment", () => {
-  const prompt = buildPrompt({ kind: "evaluate", input: "https://acme.com/jobs/7", memory: "", today: "2026-08-14", postedAt: "2026-08-07" });
-  const fields = exampleTsvRow(prompt);
-
-  assert.equal(fields.length, 10, "the row must still carry all 10 fields");
-  // Canonical form, from the regex that CONSUMES it: separator-anchored `; `,
-  // label, colon, ISO date. A mid-sentence mention is deliberately not metadata.
-  assert.match(fields[8], /; posted: 2026-08-07$/);
-});
-
-test("buildPrompt: no known date writes NO segment, never a guess", () => {
+test("buildPrompt: only a verified posting date is mentioned", () => {
+  const base = { kind: "evaluate", input: "https://acme.com/jobs/7", jdText: "Full job text", memory: "", today: "2026-08-14" };
+  const withDate = buildPrompt({ ...base, postedAt: "2026-08-07" });
+  assert.match(withDate, /verified posting date 2026-08-07/);
   for (const postedAt of [undefined, null, "", "unknown", "7 Aug 2026", "2026-8-7", "1999-01-01"]) {
-    const prompt = buildPrompt({ kind: "evaluate", input: "https://acme.com/jobs/7", memory: "", today: "2026-08-14", postedAt });
-    const fields = exampleTsvRow(prompt);
-    assert.equal(fields.length, 10, `field count changed for ${JSON.stringify(postedAt)}`);
-    assert.ok(!/posted:/.test(fields[8]), `wrote a posted segment for ${JSON.stringify(postedAt)}: ${fields[8]}`);
+    const prompt = buildPrompt({ ...base, postedAt });
+    assert.doesNotMatch(prompt, /verified posting date/);
   }
-});
-
-test("buildPrompt: the row without a date is byte-identical to before the feature", () => {
-  // The segment is the ONLY difference between the two prompts, so a run with no
-  // recorded date cannot drift from what the CLI has always produced.
-  const withDate = buildPrompt({ kind: "evaluate", input: "u", memory: "", today: "2026-08-14", postedAt: "2026-08-07" });
-  const without = buildPrompt({ kind: "evaluate", input: "u", memory: "", today: "2026-08-14" });
-  assert.equal(withDate.replace("; posted: 2026-08-07", ""), without);
 });
 
 // ── language.modes_dir / language.output ─────────────────────────────────────
@@ -348,13 +268,13 @@ test("buildPrompt: unattended multi-market evaluation falls back to primary and 
   assert.match(prompt, /report header or Block G/i);
   assert.ok(
     prompt.indexOf("If those signals remain genuinely ambiguous")
-      < prompt.indexOf("2. Persist the result CANONICALLY"),
+      < prompt.indexOf("2. Do NOT save or edit any file"),
     "ambiguity resolution must precede report and tracker persistence",
   );
   assert.ok(
-    prompt.indexOf("MARKET signals") < prompt.indexOf("2. Persist the result CANONICALLY")
-      && prompt.indexOf("modes/de/_shared.md") < prompt.indexOf("2. Persist the result CANONICALLY")
-      && prompt.indexOf("modes/zh/_shared.md") < prompt.indexOf("2. Persist the result CANONICALLY"),
+    prompt.indexOf("MARKET signals") < prompt.indexOf("2. Do NOT save or edit any file")
+      && prompt.indexOf("modes/de/_shared.md") < prompt.indexOf("2. Do NOT save or edit any file")
+      && prompt.indexOf("modes/zh/_shared.md") < prompt.indexOf("2. Do NOT save or edit any file"),
     "market selection and every declared shared context must precede persistence",
   );
 });

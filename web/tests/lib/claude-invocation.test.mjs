@@ -122,9 +122,8 @@ test("toolScopeFor: an unknown kind falls back to the narrowest scope", () => {
   }
 });
 
-test("toolScopeFor: evaluate and fix-portal keep Write and Bash on purpose", () => {
-  // Given these kinds genuinely run reserve-report-num.mjs / merge-tracker.mjs /
-  // verify-portals.mjs and persist canonical artifacts. Derived from the policy
+test("toolScopeFor: persisting kinds keep Write and Bash on purpose", () => {
+  // Given these kinds persist canonical artifacts. Derived from the policy
   // rather than named, so a newly-added writing kind is covered automatically.
   const writingKinds = KNOWN_KINDS.filter((k) => capabilitiesFor(k).writes);
   assert.ok(writingKinds.length > 0, "the policy must classify at least one kind as writing");
@@ -262,12 +261,12 @@ test("claudeCliArgs: carries the prompt and the streaming flags", () => {
   assert.equal(argValue(args, "--permission-mode"), "acceptEdits");
 });
 
-test("claudeCliArgs: evaluate still ships write access", () => {
-  // Given an evaluation, which genuinely persists report + tracker artifacts
-  const allowed = argValue(claudeCliArgs({ kind: "evaluate", prompt: "x" }), "--allowedTools");
-
-  // Then its argv keeps write access — so removing it is a deliberate act
-  assert.equal(grantsWriteCapability({ allowed, disallowed: "" }), true);
+test("claudeCliArgs: evaluate denies every write-capable tool", () => {
+  const args = claudeCliArgs({ kind: "evaluate", prompt: "x" });
+  const allowed = argValue(args, "--allowedTools");
+  const denied = toolNames(argValue(args, "--disallowedTools"));
+  assert.equal(grantsWriteCapability({ allowed, disallowed: denied.join(",") }), false);
+  for (const tool of WRITE_CAPABLE_TOOLS) assert.ok(denied.includes(tool), `${tool} must be denied`);
 });
 
 test("argValue: absent or dangling flags yield an empty string, not a crash", () => {

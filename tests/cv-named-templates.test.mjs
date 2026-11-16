@@ -1,5 +1,5 @@
 // tests/cv-named-templates.test.mjs — the shipped named CV templates
-// (compact, executive, jake, leadership, modern, timeline) must each behave like the base
+// (compact, executive, jake, leadership, modern) must each behave like the base
 // template, not merely look different.
 //
 // A template is not "just CSS" here: cv-templates.mjs discovers it by filename
@@ -22,10 +22,10 @@ import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { pass, fail, ROOT, NODE } from './helpers.mjs';
-import { listTemplates, resolveTemplate, validateTemplate } from '../cv-templates.mjs';
+import { listTemplates, resolveTemplate, validateTemplate, DEFAULT_TEMPLATES_DIR } from '../cv-templates.mjs';
 import { stripEmptySections } from '../cv-sections-core.mjs';
 
-console.log('\nNamed CV templates (compact / executive / jake / leadership / modern / timeline)');
+console.log('\nNamed CV templates (compact / executive / jake / leadership / modern)');
 
 const NAMED = [
   { name: 'compact', displayName: 'Compact' },
@@ -33,7 +33,6 @@ const NAMED = [
   { name: 'jake', displayName: 'Jake' },
   { name: 'leadership', displayName: 'Leadership' },
   { name: 'modern', displayName: 'Modern' },
-  { name: 'timeline', displayName: 'Timeline' },
 ];
 
 // Every optional section empty: each marker must be gone and the document must
@@ -45,15 +44,14 @@ const NAMED = [
 // strippable, which makes the canary stronger rather than obsolete — the
 // all-empty case (experience included) is covered against all nine shipped
 // templates in tests/cv-optional-sections.test.mjs.
-const EMPTY = { competencies: [], experience: [{ company: 'Canary' }], projects: [], education: [], certifications: [], awards: [], skills: [] };
-const MARKERS = ['CORE COMPETENCIES', 'PROJECTS', 'EDUCATION', 'CERTIFICATIONS', 'AWARDS', 'SKILLS'];
+const EMPTY = { summary: '', competencies: [], experience: [{ company: 'Canary' }], projects: [], education: [], certifications: [], awards: [], skills: [] };
+const MARKERS = ['PROFESSIONAL SUMMARY', 'CORE COMPETENCIES', 'PROJECTS', 'EDUCATION', 'CERTIFICATIONS', 'AWARDS', 'SKILLS'];
 
 const PAYLOAD = {
   lang: 'en',
   page_format: 'a4',
   candidate: {
     name: 'Jane Smith',
-    title: 'Platform <Engineer>',
     email: 'jane@example.com',
     location: 'Berlin, Germany',
     linkedin: { url: 'https://linkedin.com/in/janesmith', display: 'linkedin.com/in/janesmith' },
@@ -69,13 +67,12 @@ const PAYLOAD = {
   }],
   projects: [{ name: 'Open Source Thing', description: 'A tool people use.' }],
   education: [{ title: 'BSc Computer Science', org: 'Example University', year: '2018' }],
-  languages: [{ category: 'Example <Language>', items: 'B2 & C1' }],
   certifications: [],
   awards: [],
   skills: [{ category: 'Languages', items: ['Go', 'TypeScript'] }],
 };
 
-const listed = listTemplates('cv');
+const listed = listTemplates('cv', { dir: DEFAULT_TEMPLATES_DIR });
 const dir = mkdtempSync(join(tmpdir(), 'cv-named-templates-'));
 const input = join(dir, 'payload.json');
 writeFileSync(input, JSON.stringify(PAYLOAD));
@@ -112,9 +109,9 @@ for (const { name, displayName } of NAMED) {
   else fail(`${name}: closing skeleton was swallowed — check the <!-- END --> sentinel`);
 
   if (stripEmptySections(html, {
-    competencies: ['x'], experience: [{ company: 'e' }], projects: [{ name: 'p' }],
+    summary: 's', competencies: ['x'], experience: [{ company: 'e' }], projects: [{ name: 'p' }],
     education: [{ degree: 'd' }], certifications: [{ title: 'c' }],
-    awards: [{ title: 'a' }], skills: [{ category: 's', items: 'x' }], languages: [{ category: 'Example', items: 'Fluent' }],
+    awards: [{ title: 'a' }], skills: [{ category: 's', items: 'x' }],
   }, 'html') === html) pass(`${name}: a fully populated payload strips nothing`);
   else fail(`${name}: strip removed content from a populated payload`);
 
@@ -141,13 +138,6 @@ for (const { name, displayName } of NAMED) {
 
     if (rendered.includes('Jane Smith') && rendered.includes('Example GmbH')) pass(`${name}: payload content reaches the output`);
     else fail(`${name}: rendered output is missing payload content`);
-    if (name === 'timeline') {
-      if (rendered.includes('Platform &lt;Engineer&gt;') && rendered.includes('Example &lt;Language&gt;') && rendered.includes('B2 &amp; C1')) pass('timeline: title and language entries render with HTML escaping');
-      else fail('timeline: title or language data missing or unescaped');
-      if (!stripped.includes('<!-- LANGUAGES -->')) pass('timeline: absent languages leave no bare heading');
-      else fail('timeline: absent languages left a bare heading');
-    }
-
   } catch (e) {
     fail(`${name}: build-cv-html.mjs crashed — ${e.message}`);
   }

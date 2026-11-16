@@ -64,6 +64,7 @@ export const KNOWN: CliSpec[] = [
   { id: "gemini", name: "Gemini CLI", bin: "gemini", run: "gemini -p", url: "https://github.com/google-gemini/gemini-cli", args: (p) => ["-p", p] },
   { id: "opencode", name: "OpenCode", bin: "opencode", run: "opencode run", url: "https://opencode.ai", args: (p) => ["run", p] },
   { id: "pi", name: "Pi", bin: "pi", run: "pi -p", url: "https://github.com/earendil-works/pi", args: (p) => ["--no-session", "-p", p] },
+  { id: "omp", name: "Oh My Pi", bin: "omp", run: "omp -p", url: "https://github.com/can1357/oh-my-pi", args: (p) => ["-p", p] },
   { id: "copilot", name: "GitHub Copilot CLI", bin: "copilot", run: "copilot -p", url: "https://docs.github.com/en/copilot/github-copilot-in-the-cli", args: (p) => ["-p", p] },
   { id: "qwen", name: "Qwen CLI", bin: "qwen", run: "qwen -p", url: "https://qwen.ai/qwencode", args: (p) => ["-p", p] },
   { id: "antigravity", name: "Antigravity CLI", bin: "agy", run: "agy -p", url: "https://antigravity.google", args: (p) => ["-p", p] },
