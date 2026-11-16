@@ -24,11 +24,8 @@ const { sandbox, suite, runner, remove } = createRunnerSandbox('career-ops-seria
 try {
   const helpersFile = join(sandbox, 'tests', 'helpers.mjs');
   const src = readFileSync(helpersFile, 'utf-8');
-  const patched = src
-    .replace('export const DEFAULT_SCRIPT_TIMEOUT_MS = 30_000;', 'export const DEFAULT_SCRIPT_TIMEOUT_MS = 2_000;')
-    .replace("encoding: 'utf-8', timeout: 30000,", "encoding: 'utf-8', timeout: 2000,");
-  const both = (patched.match(/2_000;|timeout: 2000,/g) ?? []).length === 2;
-  check('the sandbox budget is shortened in both places helpers.mjs spells it', both);
+  const patched = src.replace('export const DEFAULT_SCRIPT_TIMEOUT_MS = 30_000;', 'export const DEFAULT_SCRIPT_TIMEOUT_MS = 2_000;');
+  check('the sandbox shared budget is shortened', patched.includes('export const DEFAULT_SCRIPT_TIMEOUT_MS = 2_000;'));
   writeFileSync(helpersFile, patched);
 
   suite('slow/a-slow.test.mjs', [RUNNER_IMPORT, "test('outlives the budget', async () => { await new Promise((r) => setTimeout(r, 8000)); });"]);
