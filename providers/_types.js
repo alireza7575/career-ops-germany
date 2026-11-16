@@ -30,6 +30,31 @@
  *                               `descriptionPlain`; most providers omit it.
  *                               Consumed by scan.mjs's content_filter; an
  *                               empty/absent value always passes the filter.
+ * @property {string} [eligibilityText] The source's own statement of where the
+ *                               job can be done or who may apply, when the
+ *                               source gives it outside the job description:
+ *                               `cryptocurrencyjobs.mjs` takes it from the
+ *                               feed teaser ("can be done remotely anywhere in
+ *                               the United States, or Canada"). Set it only to
+ *                               that statement, never to a teaser or excerpt
+ *                               as a whole. Read ONLY by scan.mjs's
+ *                               country_eligibility_filter, which matches it
+ *                               together with `description`; content_filter
+ *                               and visa_filter never read it, so setting it
+ *                               cannot make a posting look like it has a JD.
+ *                               Omitted when the source has no such statement.
+ * @property {string} [visaText] Text the source gives outside the job
+ *                               description that may state visa sponsorship:
+ *                               `startup-jobs.mjs` passes its feed teaser
+ *                               ("... we offer visa sponsorship."). Unlike
+ *                               `eligibilityText`, a whole teaser is fine here:
+ *                               visa_filter only looks for its sponsorship
+ *                               keywords, and a text without them gets the same
+ *                               decision as no text. Read ONLY by scan.mjs's
+ *                               visa_filter, which matches it together with
+ *                               `description`; content_filter and
+ *                               country_eligibility_filter never read it.
+ *                               Omitted when the source has no such text.
  * @property {number} [postedAt] Epoch ms when the posting was published.
  *                               Omitted when the source doesn't expose a
  *                               usable date. scan.mjs ignores it; consumers
@@ -163,7 +188,9 @@
  */
 
 /**
- * Options forwarded to the underlying `fetch` call.
+ * Options forwarded to the underlying `fetch` call, plus the body ceiling the
+ * capped readers consume themselves (never reaching fetch — undici ignores
+ * unknown init keys either way).
  *
  * @typedef {object} FetchOptions
  * @property {number}                [timeoutMs]
@@ -171,6 +198,7 @@
  * @property {string}                [method]
  * @property {(string|null)}         [body]
  * @property {('error'|'follow'|'manual')} [redirect]
+ * @property {number}                [maxBytes] Response-body ceiling for fetchJson/fetchText; defaults to _http.mjs DEFAULT_MAX_BODY_BYTES. Over-cap throws `code: 'response_too_large'`.
  */
 
 /**
@@ -208,6 +236,22 @@
  *                              versions selectively also returns the ranked ones, after
  *                              each posting's default version; scan.mjs then keeps the
  *                              best-ranked version where it keeps one per posting.
+ * @property {(title: string) => boolean} [titleWanted] Present only in scan.mjs runs whose
+ *                              entry filters on title: this scan's own title decision
+ *                              (title_filter, overrides included). A provider that pays an
+ *                              extra request per posting (workday's multi-location detail
+ *                              GETs, sitemap's fetchDetails) spends it only on postings
+ *                              this returns true for, so detail requests scale with the
+ *                              relevant postings, not the board. It never drops a row: the
+ *                              provider still returns every posting and scan.mjs filters.
+ *                              Absent in verify-portals and tests.
+ * @property {{get: (key: string) => any, set: (key: string, value: any) => void, delete: (key: string) => void}} [idCache]
+ *                              This provider's slice of the store in provider-id-cache.mjs:
+ *                              values it resolved on an earlier scan (a board id that only
+ *                              a careers-page request reveals), kept between runs. Present
+ *                              in scan.mjs and scan-ats-full.mjs runs, absent elsewhere
+ *                              (verify-portals, tests), so a provider must work without it.
+ *                              Values are stored as JSON.
  */
 
 /**
@@ -217,6 +261,10 @@
  * @typedef {object} Provider
  * @property {string} id                                                       Unique across all loaded providers.
  * @property {((entry: PortalEntry) => (DetectHit | null))} [detect]           Optional auto-detection.
+ * @property {(entry: PortalEntry) => (string | undefined)} [fetchHost]        Optional.
+ *   Hostname that fetch() requests, when that host is not detect().url.
+ *   scan.mjs uses the string as the per-host concurrency key. Omit it when
+ *   detect().url, api, or careers_url already names that host.
  * @property {(entry: PortalEntry, ctx: Context) => Promise<Job[]>} fetch      Required.
  * @property {((job: Job) => (string | null))} [dedupKey]                     Optional. A
  *   provider-scoped identifier for a job, precise where URL normalization

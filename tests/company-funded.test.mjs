@@ -1,6 +1,7 @@
 import { pass, fail, ROOT } from './helpers.mjs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
+import { localToday } from '../lib/local-today.mjs';
 
 console.log('\nUtility - company-funded');
 
@@ -352,16 +353,18 @@ try {
     return res;
   };
   try {
+    const now = new Date('2026-07-20T00:00:00Z');
     const result = await mod.discoverFundedCompanies({
       dryRun: true,
       sources: ['techcrunch'],
       months: 3,
       limit: 5,
-      now: new Date('2026-07-20T00:00:00Z'),
+      now,
     });
     if (
       result.companies[0]?.company === 'Acme' &&
-      result.generated_at === '2026-07-20' &&
+      // Dated with the day where the user is; local-time-stamps.test.mjs pins it.
+      result.generated_at === localToday(now) &&
       seenFetchOptions.every((call) => call.options?.redirect === 'manual') &&
       String(seenFetchOptions[0]?.url) === 'https://techcrunch.com/feed/' &&
       seenFetchOptions.some((call) => String(call.url) === 'https://techcrunch.com/final-feed/')
@@ -372,6 +375,39 @@ try {
     }
   } finally {
     globalThis.fetch = originalFetch;
+  }
+
+  // Opt-in source: siliconangle is accepted by --sources, is fetched only when
+  // requested, and is not part of the default set.
+  {
+    const urls = [];
+    globalThis.fetch = async (url) => {
+      urls.push(String(url));
+      const host = new URL(String(url)).hostname;
+      const item = host === 'siliconangle.com' || host.endsWith('.siliconangle.com')
+        ? ['Gamma raises $12M Seed', 'https://siliconangle.com/2026/07/14/gamma']
+        : null;
+      const body = item
+        ? `<?xml version="1.0"?><rss><channel><item><title>${item[0]}</title><link>${item[1]}</link><pubDate>Wed, 15 Jul 2026 12:00:00 +0000</pubDate><description>${item[0]}.</description></item></channel></rss>`
+        : '<?xml version="1.0"?><rss><channel></channel></rss>';
+      const res = new Response(body, { status: 200, headers: { 'content-type': 'application/rss+xml' } });
+      Object.defineProperty(res, 'url', { value: String(url) });
+      return res;
+    };
+    try {
+      const optIn = await mod.discoverFundedCompanies({ dryRun: true, sources: ['siliconangle'], months: 3, limit: 5, now: new Date('2026-07-20T00:00:00Z') });
+      const names = optIn.companies.map((c) => c.company).sort().join(',');
+      const fetched = urls.some((u) => { const x = new URL(u); return (x.hostname === 'siliconangle.com' || x.hostname.endsWith('.siliconangle.com')) && x.pathname.startsWith('/feed'); });
+      if (names === 'Gamma' && fetched) pass('discoverFundedCompanies reads the opt-in siliconangle feed when asked');
+      else fail(`opt-in sources wrong: companies=${names} urls=${JSON.stringify(urls)}`);
+
+      urls.length = 0;
+      await mod.discoverFundedCompanies({ dryRun: true, months: 3, limit: 5, now: new Date('2026-07-20T00:00:00Z') });
+      if (urls.length > 0 && !urls.some((u) => { const h = new URL(u).hostname; return h === 'siliconangle.com' || h.endsWith('.siliconangle.com'); })) pass('the default sources do not fetch the opt-in feeds');
+      else fail(`default run touched opt-in feeds or fetched nothing: ${JSON.stringify(urls)}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   }
 
   globalThis.fetch = async (url, options) => {
