@@ -4,7 +4,19 @@ An AI job-search workspace for the German market. Find roles, evaluate postings 
 
 This community fork builds on [career-ops](https://github.com/career-ops-hq/career-ops), created by [Santiago Fernández de Valderrama (santifer)](https://santifer.io). Keep your career data in a separate private folder. You review drafts and submit applications yourself.
 
-[Quick start](#quick-start) · [Private data setup](docs/PRIVATE_DATA_REPO.md) · [German-market guide](docs/GERMAN_MARKET.md) · [Web app](web/README.md) · [Troubleshooting](#updates-and-troubleshooting)
+[New to AI?](#new-to-ai-start-here) · [Quick start](#quick-start) · [Private data setup](docs/PRIVATE_DATA_REPO.md) · [German-market guide](docs/GERMAN_MARKET.md) · [Web app](web/README.md)
+
+## New to AI? Start here
+
+You do not need to write code. An **AI coding assistant** is an app you can talk to in ordinary language that can also work with files on your computer. Career-Ops supplies the job-search instructions and tools; the assistant helps you set them up and use them.
+
+Follow the [beginner walkthrough: let AI help you set up](docs/BEGINNER_SETUP.md). It explains how to install an assistant, choose a working folder, and paste your first message. Use the prompts in its chat box; commands such as `git clone` belong in a terminal, which the assistant can help you use.
+
+Your first message can be:
+
+> I am new to AI and technical setup. Help me install https://github.com/alireza7575/career-ops-germany for my own job search. First ask which operating system I use and where I want the files. Check what is already installed, explain each step in plain language, and handle the setup work you can. Keep my career data in a separate private folder. Do not ask for passwords or API keys in chat. Tell me clearly whenever I need to click something or sign in myself.
+
+**Start with the walkthrough before sharing your CV.** It takes you through private data setup, adding your own experience, and evaluating one job. If you already use an AI coding assistant, continue with the quick start below.
 
 ## What this fork adds
 

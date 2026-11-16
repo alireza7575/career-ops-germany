@@ -1,5 +1,7 @@
 # Set up your private career data repository
 
+New to AI assistants or command-line tools? Start with [the beginner walkthrough](BEGINNER_SETUP.md), which includes messages you can paste into your assistant to help with this setup.
+
 Keep two sibling folders: one for this fork's code, another for your personal data. You can update or share the code without publishing your CV, profile or applications.
 
 ```text
