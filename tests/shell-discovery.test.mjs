@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'fs';
-import { getBash, bashSource, run, lastRunFailure } from './helpers.mjs';
+import { getBash, bashSource, run, runBash, lastRunFailure } from './helpers.mjs';
 
 const SOURCES = ['posix', 'git-bash', 'wsl', 'path', 'unresolved'];
 
@@ -45,7 +45,7 @@ test('on posix the source says so, on win32 it never does', () => {
 test('a failing shell command exposes its real exit status instead of a bare null', () => {
   // The #2344 symptom was `run(...) || ''` turning exit 127 into an empty
   // string that the assertion blamed on the code under test.
-  const out = run(getBash(), ['-c', 'exit 7']);
+  const out = runBash(['-c', 'exit 7']);
   assert.equal(out, null);
   const failure = lastRunFailure();
   assert.ok(failure, 'lastRunFailure() lost the failure');
@@ -53,7 +53,7 @@ test('a failing shell command exposes its real exit status instead of a bare nul
 });
 
 test('lastRunFailure() clears after a command succeeds', () => {
-  assert.equal(run(getBash(), ['-c', 'echo ok']), 'ok');
+  assert.equal(runBash(['-c', 'echo ok']), 'ok');
   assert.equal(lastRunFailure(), null);
 });
 
@@ -61,11 +61,11 @@ test('a selected Git Bash survives a fixture PATH override', () => {
   const bash = getBash();
   if (process.platform !== 'win32' || bash === 'bash') return;
   const parentPath = process.env.PATH;
-  assert.equal(run(bash, ['-c', 'echo retained'], { env: { ...process.env, PATH: '' } }), 'retained');
+  assert.equal(runBash(['-c', 'echo retained'], { env: { ...process.env, Path: 'C:/invalid', PATH: '' } }), 'retained');
   assert.equal(process.env.PATH, parentPath, 'the temporary parent PATH change must be restored');
 });
 
 test('run keeps shell syntax in argv even if a caller requests shell mode', () => {
   const value = 'literal & echo injected';
-  assert.equal(run('node', ['-e', 'console.log(process.argv[1])', value], { shell: true }), value);
+  assert.equal(run('node', ['-e', 'console.log(process.argv.slice(1).join(""))', value], { shell: true }), value);
 });

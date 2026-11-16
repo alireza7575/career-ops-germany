@@ -76,7 +76,7 @@ import { join, dirname, basename, relative, delimiter } from 'path';
 import { tmpdir, availableParallelism } from 'os';
 import { fileURLToPath, pathToFileURL } from 'url';
 import * as yaml from 'js-yaml';
-import { pass, fail, warn, stripJsComments, run, runRejects, runAcrossUtcDay, runAcrossLocalDay, lastRunFailure, formatRunFailure, fileExists, finish, results, absorbResults, importSuiteContained, linkNodeModules, ROOT, QUICK, NODE, DEFAULT_SCRIPT_TIMEOUT_MS, getBash, toBashPath, hermeticGitEnv, pinSandboxDataRoot, exitOnInterrupt, ownRootEnv } from './tests/helpers.mjs';
+import { pass, fail, warn, stripJsComments, run, runBash, runRejects, runAcrossUtcDay, runAcrossLocalDay, lastRunFailure, formatRunFailure, fileExists, finish, results, absorbResults, importSuiteContained, linkNodeModules, ROOT, QUICK, NODE, DEFAULT_SCRIPT_TIMEOUT_MS, getBash, hermeticGitEnv, pinSandboxDataRoot, exitOnInterrupt, ownRootEnv } from './tests/helpers.mjs';
 import { flagValue, hasFlag } from './lib/cli-flags.mjs';
 import { REQUIRED_TOOL_ENV, declaresTool } from './tests/required-tools.mjs';
 import { collectMjsFiles } from './lib/mjs-files.mjs';
@@ -14282,7 +14282,7 @@ try {
   }
 
   const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}` };
-  const out = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1', '--max-retries', '3', '--rate-limit-sleep', '0'], {
+  const out = runBash(['batch/batch-runner.sh', '--parallel', '1', '--max-retries', '3', '--rate-limit-sleep', '0'], {
     cwd: tmp,
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -14301,7 +14301,7 @@ try {
     '1\thttps://example.com/one\tpaused_rate_limit\t2026-01-01T00:00:00Z\t2026-01-01T00:00:01Z\t001\t-\tsession-limit; paused\t0',
     '2\thttps://example.com/two\tfailed\t2026-01-01T00:00:00Z\t2026-01-01T00:00:01Z\t002\t-\tworker-crash\t1',
   ].join('\n') + '\n');
-  const dry = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--resume-paused', '--dry-run'], {
+  const dry = runBash(['batch/batch-runner.sh', '--resume-paused', '--dry-run'], {
     cwd: tmp,
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -14321,7 +14321,7 @@ try {
     '2\thttps://example.com/two\tcompleted\t2026-01-01T00:00:00Z\t2026-01-01T00:00:01Z\t002\tbad);system("oops")\t-\t0',
     '3\thttps://example.com/three\tskipped\t2026-01-01T00:00:00Z\t2026-01-01T00:00:01Z\t003\t3.5\tbelow-min-score\t0',
   ].join('\n') + '\n');
-  const statusOnly = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--status'], {
+  const statusOnly = runBash(['batch/batch-runner.sh', '--status'], {
     cwd: tmp,
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -14389,7 +14389,7 @@ try {
     execFileSync('chmod', ['+x', join(fakeBin, 'claude')]);
   }
 
-  run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1', '--rate-limit-sleep', '0'], {
+  runBash(['batch/batch-runner.sh', '--parallel', '1', '--rate-limit-sleep', '0'], {
     cwd: tmp,
     env: { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}` },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -14467,7 +14467,7 @@ try {
   writeFileSync(join(recoveryDir, 'rec-shift1'),
     '99\thttps://example.com/99\tfailed\t2026-08-07T09:00:00Z\t\t901\t\trate limited\t2\n');
 
-  run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1', '--rate-limit-sleep', '0'], {
+  runBash(['batch/batch-runner.sh', '--parallel', '1', '--rate-limit-sleep', '0'], {
     cwd: tmp,
     env: { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}` },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -14544,7 +14544,7 @@ try {
   const { tmp, batchDir, fakeBin } = makeTierFixture('spend_tier: economy\n');
   const argFile = join(tmp, 'claude-argv.txt');
   const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: argFile };
-  const out = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
+  const out = runBash(['batch/batch-runner.sh', '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
   const argv = existsSync(argFile) ? readFileSync(argFile, 'utf-8') : '';
   if (argv.includes('--model') && argv.includes('claude-haiku-5-5') && out.includes('spend_tier=economy')) {
     pass('economy spend_tier resolves to claude-haiku-5-5');
@@ -14559,7 +14559,7 @@ try {
   const { tmp, batchDir, fakeBin } = makeTierFixture('spend_tier: premium\n');
   const argFile = join(tmp, 'claude-argv.txt');
   const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: argFile };
-  const premiumOut = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
+  const premiumOut = runBash(['batch/batch-runner.sh', '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
   const premiumArgv = existsSync(argFile) ? readFileSync(argFile, 'utf-8') : '';
   if (premiumArgv.includes('--model') && premiumArgv.includes('claude-opus-5-5') && premiumOut.includes('spend_tier=premium')) {
     pass('premium spend_tier resolves to claude-opus-5-5');
@@ -14574,7 +14574,7 @@ try {
   const { tmp, batchDir, fakeBin } = makeTierFixture('spend_tier: premium\n');
   const argFile = join(tmp, 'claude-argv.txt');
   const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: argFile };
-  const overrideOut = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1', '--model', 'claude-sonnet-5-5'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
+  const overrideOut = runBash(['batch/batch-runner.sh', '--parallel', '1', '--model', 'claude-sonnet-5-5'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
   const overrideArgv = existsSync(argFile) ? readFileSync(argFile, 'utf-8') : '';
   if (overrideArgv.includes('--model') && overrideArgv.includes('claude-sonnet-5-5') && !overrideArgv.includes('claude-opus-5-5') && overrideOut.includes('explicit --model override')) {
     pass('--model override takes precedence over spend_tier');
@@ -14589,7 +14589,7 @@ try {
   const { tmp, batchDir, fakeBin } = makeTierFixture('# no spend_tier key\nname: test\n');
   const argFile = join(tmp, 'claude-argv.txt');
   const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: argFile };
-  const standardDefaultOut = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
+  const standardDefaultOut = runBash(['batch/batch-runner.sh', '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
   const standardDefaultArgv = existsSync(argFile) ? readFileSync(argFile, 'utf-8') : '';
   if (standardDefaultArgv.includes('--model') && standardDefaultArgv.includes('claude-sonnet-5-5') && standardDefaultOut.includes('spend_tier=standard')) {
     pass('missing spend_tier key defaults to standard tier (claude-sonnet-5-5)');
@@ -14604,7 +14604,7 @@ try {
   const { tmp, batchDir, fakeBin } = makeTierFixture('spend_tier: turbo\n');
   const argFile = join(tmp, 'claude-argv.txt');
   const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH}`, BATCH_ARG_FILE: argFile };
-  const invalidTierOut = run(getBash(), [toBashPath(join(batchDir, 'batch-runner.sh')), '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
+  const invalidTierOut = runBash(['batch/batch-runner.sh', '--parallel', '1'], { cwd: tmp, env, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
   const invalidTierArgv = existsSync(argFile) ? readFileSync(argFile, 'utf-8') : '';
   if (invalidTierArgv.includes('--model') && invalidTierArgv.includes('claude-sonnet-5-5') && invalidTierOut.includes('spend_tier=standard')) {
     pass('invalid spend_tier value falls back to standard tier (claude-sonnet-5-5)');
@@ -14631,13 +14631,8 @@ try {
     // by stripping the trailing invocation line, then call log_discard directly.
     const sourceable = runnerSrc.replace(/\nmain "\$@"\s*$/, '\n');
     writeFileSync(join(batchDir, 'batch-runner.lib.sh'), sourceable);
-    const script = [
-      'set -euo pipefail',
-      `source "${toBashPath(join(batchDir, 'batch-runner.lib.sh'))}"`,
-      'log_discard "7" "https://example.com/mismatch" "wrong seniority band"',
-      `cat "${toBashPath(join(batchDir, 'logs', 'discard.log'))}"`,
-    ].join('\n');
-    const out = run(getBash(), ['-c', script], { cwd: tmp, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
+    const script = 'set -euo pipefail\nsource batch/batch-runner.lib.sh\nlog_discard "7" "https://example.com/mismatch" "wrong seniority band"\ncat batch/logs/discard.log';
+    const out = runBash(['-c', script], { cwd: tmp, stdio: ['pipe', 'pipe', 'pipe'] }) || '';
     const line = out.trim().split('\n').pop() || '';
     const cols = line.split('\t');
 
@@ -18401,33 +18396,16 @@ console.log('\n59. CV template resolver (cv-templates.mjs)');
 }
 
 
-console.log('\n59c. The exported script budget matches the one run() enforces');
+console.log('\n59c. Both test runners use the exported script budget');
 {
-  // DEFAULT_SCRIPT_TIMEOUT_MS and the `timeout: 30000` literal inside run() are
-  // the same number held in two places, because that execFileSync call is kept
-  // byte-identical on purpose — editing it makes CodeQL re-attribute its
-  // long-standing "uncontrolled command line" finding to whichever PR touched
-  // the line. A comment asks the two to stay in step, and a comment is not a
-  // mechanism: if they drift, the slow-script warning starts measuring against
-  // a budget nobody is enforcing, and the first sign is a script killed at a
-  // limit the suite never mentioned. Read the literal back and compare.
-  // Anchored on run()'s own `(exe, args, …)` call signature rather than on
-  // `execFileSync` alone: that file has six other execFileSync calls, and a
-  // pattern that takes the FIRST match would start comparing against whichever
-  // one grows a `timeout:` first — a guard quietly measuring the wrong number,
-  // which is worse than no guard because it still reports green.
-  //
-  // Zero or several matches is therefore a failure in its own right, not a
-  // reason to fall back to a best guess.
   const helpersSrc = readFileSync(join(ROOT, 'tests', 'helpers.mjs'), 'utf-8');
-  const enforced = [...helpersSrc.matchAll(/execFileSync\(\s*exe\s*,\s*args\s*,\s*\{[^}]*?timeout:\s*([1-9]\d*)\s*(?=[,}])/g)];
-  if (enforced.length !== 1) {
-    fail(`expected exactly one timeout literal in run()'s execFileSync call, found ${enforced.length}`
-      + ' — if that call was refactored or duplicated, update this check alongside it');
-  } else if (Number(enforced[0][1]) === DEFAULT_SCRIPT_TIMEOUT_MS) {
-    pass(`run()'s enforced timeout (${enforced[0][1]}ms) matches the exported DEFAULT_SCRIPT_TIMEOUT_MS`);
-  } else {
-    fail(`budget drift: run() enforces ${enforced[0][1]}ms but DEFAULT_SCRIPT_TIMEOUT_MS is ${DEFAULT_SCRIPT_TIMEOUT_MS}ms`);
+  for (const name of ['run', 'runBash']) {
+    const start = helpersSrc.indexOf('export function ' + name + '(');
+    const end = helpersSrc.indexOf('\nexport ', start + 1);
+    const body = start < 0 ? '' : helpersSrc.slice(start, end < 0 ? undefined : end);
+    const defaults = [...body.matchAll(/timeout:\s*DEFAULT_SCRIPT_TIMEOUT_MS\b/g)];
+    if (defaults.length === 1) pass(name + ' uses DEFAULT_SCRIPT_TIMEOUT_MS as its default timeout');
+    else fail(name + ' must use the exported default timeout exactly once; found ' + defaults.length);
   }
 }
 

@@ -455,19 +455,9 @@ const WINDOWS_CYGPATH_CANDIDATES = [
  */
 function resolveAllowedExecutable(cmd) {
   if (cmd === process.execPath || cmd === 'node') return process.execPath;
-  if (cmd === 'bash') return 'bash';
   if (cmd === 'git') return 'git';
   if (cmd === 'go') return 'go';
   if (cmd === 'wsl') return 'wsl';
-  for (const candidate of WINDOWS_BASH_CANDIDATES) {
-    if (cmd === candidate) return candidate;
-  }
-  // The PATH probe resolves bash to an install dir the candidate list does not
-  // know (a Git outside Program Files/Scoop, e.g. D:\Git). Allow exactly the
-  // path getBash() itself resolved and memoized — never an arbitrary caller
-  // string: bash callers reach it as run(getBash(), ...), so the cache is set
-  // by construction, and what it holds is the same shell the probes ran.
-  if (bashCache !== null && cmd === bashCache) return cmd;
   throw new Error(`run(): executable not in the test-helper allowlist: ${cmd}`);
 }
 
@@ -501,21 +491,55 @@ export function run(cmd, args = [], opts = {}) {
     : opts;
   opts = isolatedOpts;
   try {
-    const childOpts = { cwd: ROOT, encoding: 'utf-8', timeout: 30000, ...opts, shell: false };
+    const childOpts = { cwd: ROOT, encoding: 'utf-8', timeout: DEFAULT_SCRIPT_TIMEOUT_MS, ...opts, shell: false };
     let output;
     if (exe === process.execPath) output = execFileSync(process.execPath, args, childOpts);
     else if (exe === 'git') output = execFileSync('git', args, childOpts);
     else if (exe === 'go') output = execFileSync('go', args, childOpts);
     else if (exe === 'wsl') output = execFileSync('wsl', args, childOpts);
-    else if (exe === 'bash') output = execFileSync('bash', args, childOpts);
-    else {
+    else throw new Error(`run(): unsupported executable: ${exe}`);
+    return output.trim();
+  } catch (e) {
+    // execFileSync attaches the child's streams and exit status to the error.
+    // Keep them: callers report failure as `<name> crashed`, and without this a
+    // CI-only failure arrives as a single line with no stack, no assertion text,
+    // and no exit code, which is not enough to act on.
+    lastFailure = {
+      status: e?.status ?? null,
+      signal: e?.signal ?? null,
+      // 'ETIMEDOUT' when the timeout killed the child. A killed child has no
+      // exit status, so this is the only field that says it ran out of time.
+      code: e?.code ?? null,
+      stdout: e?.stdout == null ? '' : String(e.stdout),
+      stderr: e?.stderr == null ? '' : String(e.stderr),
+    };
+    warnFallbackShell(exe);
+    return null;
+  }
+}
+
+/** Run a Bash fixture separately from run(), so data passed to Node cannot reach a shell. */
+export function runBash(args = [], opts = {}) {
+  lastFailure = null;
+  const exe = getBash();
+  try {
+    const childOpts = { cwd: ROOT, encoding: 'utf-8', timeout: DEFAULT_SCRIPT_TIMEOUT_MS, ...opts, shell: false };
+    let output;
+    if (exe === 'bash') {
+      output = execFileSync('bash', args, childOpts);
+    } else {
       if (!existsSync(exe)) throw Object.assign(new Error(`bash not found: ${exe}`), { code: 'ENOENT' });
       const env = { ...childOpts.env ?? process.env };
-      const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
-      env[pathKey] = `${dirname(exe)}${delimiter}${env[pathKey] || ''}`;
+      // A fixture may overlay PATH onto a Windows env that already has Path.
+      // Node selects one spelling during spawn; retain the explicit override.
+      const fixturePath = Object.hasOwn(env, 'PATH') ? env.PATH
+        : env[Object.keys(env).find((key) => key.toUpperCase() === 'PATH')] || '';
+      for (const key of Object.keys(env)) {
+        if (key.toUpperCase() === 'PATH') delete env[key];
+      }
+      env.PATH = `${dirname(exe)}${delimiter}${fixturePath || ''}`;
       // Windows resolves the executable against the parent's PATH, not the
-      // child env passed to execFileSync. This call is synchronous, so restore
-      // the parent PATH immediately after Node resolves the fixed 'bash' name.
+      // child env passed to execFileSync. Restore it after the synchronous call.
       const parentPathKey = Object.keys(process.env).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
       const parentPath = process.env[parentPathKey];
       process.env[parentPathKey] = `${dirname(exe)}${delimiter}${parentPath || ''}`;
@@ -528,15 +552,9 @@ export function run(cmd, args = [], opts = {}) {
     }
     return output.trim();
   } catch (e) {
-    // execFileSync attaches the child's streams and exit status to the error.
-    // Keep them: callers report failure as `<name> crashed`, and without this a
-    // CI-only failure arrives as a single line with no stack, no assertion text,
-    // and no exit code, which is not enough to act on.
     lastFailure = {
       status: e?.status ?? null,
       signal: e?.signal ?? null,
-      // 'ETIMEDOUT' when the timeout killed the child. A killed child has no
-      // exit status, so this is the only field that says it ran out of time.
       code: e?.code ?? null,
       stdout: e?.stdout == null ? '' : String(e.stdout),
       stderr: e?.stderr == null ? '' : String(e.stderr),
