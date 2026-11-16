@@ -17,7 +17,7 @@ start from the same step: put your data in its own folder.
 
 By default your files sit inside the checkout, mixed in with code. career-ops can read
 and write all of them from a separate folder instead (see
-[External Data Directory](../README.md#external-data-directory-optional) and
+[Private data repository setup](PRIVATE_DATA_REPO.md) and
 [`DATA_CONTRACT.md`](../DATA_CONTRACT.md#custom-data-directory)). Code, `modes/` and
 `node_modules/` stay in the checkout; everything in the User Layer moves, with one
 exception: `config/local-paths.txt`, if you have one, stays in the checkout because
