@@ -4,6 +4,8 @@ This fork adds a reusable German software-search starter to upstream career-ops.
 
 ## Set up your own data
 
+For a complete walkthrough, including GitHub setup, ignore rules, first push and using another computer, follow [Set up your private career data repository](PRIVATE_DATA_REPO.md).
+
 1. Clone this fork and run npm install --ignore-scripts. Use the normal setup guide if you also need Playwright browsers.
 2. Choose a separate personal data directory. In the code checkout, create a local .career-ops-data file containing its absolute path. The marker is ignored by Git. CAREER_OPS_ROOT or CAREER_OPS_DATA_DIR overrides it if set.
 3. Ask your coding agent to run career-ops onboarding with that data root. Supply your own CV and personalize config/profile.yml and modes/_profile.md. Confirm your languages, location policy, target roles and compensation.

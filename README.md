@@ -109,7 +109,9 @@ npm install --ignore-scripts
 
 ### 2. Keep your career data private
 
-Create a separate personal data folder. In the code checkout, create a `.career-ops-data` file containing that folder's absolute path, for example `C:/career-ops-data` on Windows. The marker is ignored by Git. If you version your personal data, use a separate **private** repository.
+Follow the [complete private data repository guide](docs/PRIVATE_DATA_REPO.md) to create a private GitHub repo, configure ignore rules, connect it to this fork, and restore it on another computer.
+
+Create a separate personal data folder. In the code checkout, create a `.career-ops-data` file containing its path, for example `../career-ops-data` for a sibling folder or `C:/career-ops-data` on Windows. The marker is ignored by Git. If you version your personal data, use a separate **private** repository.
 
 Open your AI coding CLI in the code checkout and ask:
 
