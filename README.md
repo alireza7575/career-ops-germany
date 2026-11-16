@@ -6,11 +6,33 @@ This community fork builds on [career-ops](https://github.com/career-ops-hq/care
 
 [New to AI?](#new-to-ai-start-here) · [Quick start](#quick-start) · [Private data setup](docs/PRIVATE_DATA_REPO.md) · [German-market guide](docs/GERMAN_MARKET.md) · [Web app](web/README.md)
 
+<details>
+<summary><b>Preview the German job-search dashboard</b></summary>
+
+![German-market Explorer with role filters, location settings and German job sources](docs/germany-explorer.png)
+
+*Explorer from this fork with demo settings. No personal career data is shown. See [web app setup](#optional-local-web-app) to run it yourself.*
+
+</details>
+
 ## New to AI? Start here
 
 You do not need to write code. An **AI coding assistant** is an app you can talk to in ordinary language that can also work with files on your computer. Career-Ops supplies the job-search instructions and tools; the assistant helps you set them up and use them.
 
 Choose **Codex or Claude Code**, then follow the [beginner walkthrough: let AI help you set up](docs/BEGINNER_SETUP.md). It has separate getting-started instructions for both assistants, followed by shared setup prompts. Use the prompts in its chat box; commands such as `git clone` belong in a terminal, which the assistant can help you use.
+
+```mermaid
+flowchart TD
+    A["Open Codex or Claude Code"] --> B["Ask AI to help you set up"]
+    B --> C["Connect your private data folder"]
+    C --> D["Add your CV and choose target roles"]
+    D --> E["Find German-market jobs"]
+    E --> F["AI evaluates jobs and drafts your CV"]
+    F --> G["You review and correct the drafts"]
+    G --> H["You submit the application"]
+```
+
+Your path: set up with AI → add your own experience → find jobs → review drafts → submit yourself. The private folder holds your CV, profile, tracker and reports; [learn how it connects to the public code](docs/PRIVATE_DATA_REPO.md).
 
 Your first message can be:
 
@@ -294,10 +316,6 @@ npm run dev
 ```
 
 Open [localhost:3000](http://localhost:3000). The app provides Pipeline, Explore, CV, Config and analytics views. It binds to loopback by default. See [web/README.md](web/README.md) for requirements, data-root overrides and scheduled scans.
-
-![German-market Explorer in Career-Ops Germany, using an isolated demo data folder](docs/germany-explorer.png)
-
-*Explorer from this fork with demo settings. No personal career data is shown.*
 
 ## Limits and review
 
